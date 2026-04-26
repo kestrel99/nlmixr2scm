@@ -48,7 +48,7 @@ jobs:
             nlmixr2/rxode2ll
             nlmixr2/rxode2
             nlmixr2/nlmixr2est
-            nlmixr2/nlmixr2utils
+            kestrel99/nlmixr2utils
             nlmixr2/PreciseSums
             nlmixr2/lbfgsb3c
             nlmixr2/n1qn1c
