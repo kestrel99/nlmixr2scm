@@ -1,0 +1,49 @@
+Package: nlmixr2scm
+Title: Stepwise Covariate Modeling for nlmixr2 Models
+Version: 0.1
+Authors@R: c(
+    person("Matthew", "Fidler", email = "matthew.fidler@gmail.com", role = "aut",
+           comment = c(ORCID = "0000-0001-8538-6691")),
+    person("Vipul", "Mann", email = "vm2583@columbia.edu", role = "aut"),
+    person("Vishal", "Sarsani", email = "vsarsani@umass.edu", role = "aut",
+           comment = c(ORCID = "0000-0002-9272-3438")),
+    person("Christian", "Bartels", email = "christian.bartels@novartis.com", role = "ctb"),
+    person("Bill", "Denney", email = "wdenney@humanpredictions.com", role = "aut",
+           comment = c(ORCID = "0000-0002-5759-428X")),
+    person("Justin", "Wilkins", email = "justin.wilkins@occams.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-7099-9396"))
+  )
+Maintainer: Justin Wilkins <justin.wilkins@occams.com>
+Description: Stepwise covariate modeling tools for nlmixr2 fits, including
+    forward inclusion and backward elimination workflows, covariate model
+    construction helpers, categorical covariate expansion, cached resume
+    support, and SCM reporting utilities.
+Depends:
+    R (>= 4.0)
+License: GPL (>= 3)
+URL: https://github.com/kestrel99/nlmixr2scm
+BugReports: https://github.com/kestrel99/nlmixr2scm/issues
+Imports:
+    checkmate,
+    cli (>= 3.4.0),
+    data.table,
+    lifecycle,
+    lotri,
+    nlme,
+    nlmixr2est (>= 5.0.0),
+    nlmixr2utils,
+    rxode2 (>= 5.0.0),
+    utils
+Suggests:
+    future,
+    knitr,
+    nlmixr2data,
+    pkgload,
+    rmarkdown,
+    testthat (>= 3.0.0),
+    withr
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
