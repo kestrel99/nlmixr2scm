@@ -2,3 +2,5 @@
 
 export(runSCM)
 import(lotri)
+importFrom(stats,median)
+importFrom(stats,setNames)

@@ -178,7 +178,7 @@ When the search space is a full Cartesian product of parameters × covariates, u
 The example below tests `wt~cl`, `wt~v`, `sex~cl`, and `sex~v`, with both power and
 linear shapes for the continuous covariate — eight candidates in total.
 
-```{r scm, message = FALSE, results = "hide"}
+```{r scm, message = FALSE}
 scm <- runSCM(
   fit        = fit_base,
   data       = pkdata,
@@ -240,7 +240,7 @@ Key columns:
 
 #### Forward search detail
 
-```{r fwd-detail}
+```{r fwd-detail, results='hide'}
 fwd_tbl <- scm$resFwd[[2]]
 if (!is.null(fwd_tbl) && nrow(fwd_tbl) > 0) {
   print(fwd_tbl[
@@ -255,9 +255,13 @@ if (!is.null(fwd_tbl) && nrow(fwd_tbl) > 0) {
 }
 ```
 
+```{r}
+fwd_tbl
+```
+
 #### Backward search detail
 
-```{r bck-detail}
+```{r bck-detail, results='hide'}
 bck_tbl <- scm$resBck[[2]]
 if (!is.null(bck_tbl) && nrow(bck_tbl) > 0) {
   print(bck_tbl[, intersect(c(
@@ -267,6 +271,10 @@ if (!is.null(bck_tbl) && nrow(bck_tbl) > 0) {
 } else {
   cat("No backward elimination steps.\n")
 }
+```
+
+```{r}
+bck_tbl
 ```
 
 #### Final model
