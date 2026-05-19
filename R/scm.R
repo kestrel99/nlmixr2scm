@@ -131,6 +131,10 @@
 #'   by which the candidate OFV must exceed the parent before a retry is
 #'   triggered (criterion 1).  \code{NULL} (default) auto-detects: \code{10}
 #'   for SAEM (stochastic noise), \code{0} for all other estimators.
+#' @param retryFailOnExhaustion logical; when \code{TRUE} and all retry
+#'   attempts are exhausted with an unrealistic OFV, the candidate is marked
+#'   as failed and excluded from the search.  When \code{FALSE} (default) a
+#'   warning is emitted and the best available result is accepted.
 #'
 #' @return A list with elements \code{summaryTable} (combined forward and
 #'   backward results), \code{resFwd} (list of final fit and step table from
@@ -199,7 +203,8 @@ runSCM <- function(
   maxDeltaOFV = Inf,
   retryPerturbSD = 0.5,
   retrySmallInit = 0.01,
-  retryOFVTolerance = NULL
+  retryOFVTolerance = NULL,
+  retryFailOnExhaustion = FALSE
 ) {
   if (!is.numeric(stats::AIC(fit))) {
     cli::cli_alert_danger(
@@ -444,7 +449,8 @@ runSCM <- function(
         maxDeltaOFV = maxDeltaOFV,
         retryPerturbSD = retryPerturbSD,
         retrySmallInit = retrySmallInit,
-        retryOFVTolerance = retryOFVTolerance
+        retryOFVTolerance = retryOFVTolerance,
+        retryFailOnExhaustion = retryFailOnExhaustion
       )
       resBck <- backwardSearch(
         pairs,
@@ -465,7 +471,8 @@ runSCM <- function(
         maxDeltaOFV = maxDeltaOFV,
         retryPerturbSD = retryPerturbSD,
         retrySmallInit = retrySmallInit,
-        retryOFVTolerance = retryOFVTolerance
+        retryOFVTolerance = retryOFVTolerance,
+        retryFailOnExhaustion = retryFailOnExhaustion
       )
       data <- NULL # release temporary SCM dataset
       summaryTable <- Reduce(rbind, list(resFwd[[2]], resBck[[2]]))
@@ -497,7 +504,8 @@ runSCM <- function(
         maxDeltaOFV = maxDeltaOFV,
         retryPerturbSD = retryPerturbSD,
         retrySmallInit = retrySmallInit,
-        retryOFVTolerance = retryOFVTolerance
+        retryOFVTolerance = retryOFVTolerance,
+        retryFailOnExhaustion = retryFailOnExhaustion
       )
       data <- NULL # release temporary SCM dataset
       .printFinalSCMSummary(
@@ -530,7 +538,8 @@ runSCM <- function(
         maxDeltaOFV = maxDeltaOFV,
         retryPerturbSD = retryPerturbSD,
         retrySmallInit = retrySmallInit,
-        retryOFVTolerance = retryOFVTolerance
+        retryOFVTolerance = retryOFVTolerance,
+        retryFailOnExhaustion = retryFailOnExhaustion
       )
       data <- NULL # release temporary SCM dataset
       .printFinalSCMSummary(
@@ -1666,7 +1675,8 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
   maxDeltaOFV = Inf,
   retryPerturbSD = 0.5,
   retrySmallInit = 0.01,
-  effective_tolerance = 0
+  effective_tolerance = 0,
+  retryFailOnExhaustion = FALSE
 ) {
   raw_results <- nlmixr2utils::.plap(
     # nolint: object_usage_linter.
@@ -1882,22 +1892,28 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
             "i" = "Retrying with {next_strategy} init."
           ))
         } else {
-          # All retries exhausted and result is still flagged as unrealistic.
-          # Warn and accept the last attempt's result rather than hard-failing,
-          # so that the candidate appears in the results table (with appropriate
-          # OFV/p-value) and the search can continue.  The result may be
-          # non-significant (worsening-only) or suspiciously significant
-          # (p-value underflow / large dOFV); downstream selection logic will
-          # handle it via the configured p-value threshold.
-          cli::cli_warn(c(
-            "!" = paste0(
-              "{nam_covar} ~ {nam_var}: OFV unrealistic after ", maxRetries,
-              if (maxRetries == 1L) " retry" else " retries",
-              " (", trigger, "); accepting last result."
-            )
-          ))
-          loop_result <- list(x = x, dObjf = dObjf, dof = dof, pchisqr = pchisqr)
-          break
+          if (retryFailOnExhaustion) {
+            return(list(
+              .failed = TRUE,
+              .reason = paste0(
+                "OFV unrealistic after ", maxRetries,
+                if (maxRetries == 1L) " retry" else " retries",
+                ": ", trigger
+              ),
+              .pair = paste0(nam_covar, " ~ ", nam_var)
+            ))
+          } else {
+            cli::cli_warn(c(
+              "!" = paste0(
+                "{nam_covar} ~ {nam_var}: unrealistic OFV after all ",
+                maxRetries + 1L, " attempt",
+                if (maxRetries + 1L == 1L) "" else "s",
+                ": ", trigger, ". Accepting best available result."
+              )
+            ))
+            loop_result <- list(x = x, dObjf = dObjf, dof = dof, pchisqr = pchisqr)
+            break
+          }
         }
       }
 
@@ -2019,7 +2035,8 @@ forwardSearch <- function(
   maxDeltaOFV = Inf,
   retryPerturbSD = 0.5,
   retrySmallInit = 0.01,
-  retryOFVTolerance = NULL
+  retryOFVTolerance = NULL,
+  retryFailOnExhaustion = FALSE
 ) {
   if (!inherits(fit, "nlmixr2FitCore")) {
     stop("'fit' needs to be a nlmixr2 fit")
@@ -2122,7 +2139,8 @@ forwardSearch <- function(
       maxDeltaOFV = maxDeltaOFV,
       retryPerturbSD = retryPerturbSD,
       retrySmallInit = retrySmallInit,
-      effective_tolerance = effective_tolerance
+      effective_tolerance = effective_tolerance,
+      retryFailOnExhaustion = retryFailOnExhaustion
     )
     if (length(results) == 0) {
       break
@@ -2302,7 +2320,8 @@ backwardSearch <- function(
   maxDeltaOFV = Inf,
   retryPerturbSD = 0.5,
   retrySmallInit = 0.01,
-  retryOFVTolerance = NULL
+  retryOFVTolerance = NULL,
+  retryFailOnExhaustion = FALSE
 ) {
   if (!inherits(fitorig, "nlmixr2FitCore")) {
     stop("'fitorig' needs to be a nlmixr2 fit")
@@ -2508,7 +2527,8 @@ backwardSearch <- function(
       maxDeltaOFV = maxDeltaOFV,
       retryPerturbSD = retryPerturbSD,
       retrySmallInit = retrySmallInit,
-      effective_tolerance = effective_tolerance
+      effective_tolerance = effective_tolerance,
+      retryFailOnExhaustion = retryFailOnExhaustion
     )
     if (length(results) == 0) {
       break

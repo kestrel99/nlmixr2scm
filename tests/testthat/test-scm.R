@@ -1310,6 +1310,8 @@ test_that("runSCM: accepts new retry parameters without error (smoke)", {
   expect_equal(fmls$retryPerturbSD,    0.5)
   expect_equal(fmls$retrySmallInit,    0.01)
   expect_null(fmls$retryOFVTolerance)
+  expect_true("retryFailOnExhaustion" %in% names(fmls))
+  expect_false(fmls$retryFailOnExhaustion)
 })
 
 test_that("runSCM: maxRetries=0 disables retry (parameter accepted, no error)", {
