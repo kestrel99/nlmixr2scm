@@ -1450,7 +1450,10 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
         } else {
           NULL
         }
-        parsed_sh <- .parseInitSpec(spec_sh) # nolint: object_usage_linter.
+        parsed_sh <- .autoScaleInitSpec( # nolint: object_usage_linter.
+          spec_sh, sh, center,
+          label = paste0(sh, "~", base_covar)
+        )
         r$shape <- sh
         r$covExpr <- expr
         r$covar <- paste0(base_covar, "_", sh)

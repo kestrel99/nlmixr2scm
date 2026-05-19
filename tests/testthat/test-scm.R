@@ -1143,3 +1143,55 @@ test_that("runSCM: future plan restored to original after workers=1", {
 
   expect_equal(class(future::plan()), plan_orig)
 })
+
+# =============================================================================
+# .expandShapes — auto-scaled bounds for lin / log / identity
+# =============================================================================
+
+test_that(".expandShapes: lin shape auto-scales bounds by center", {
+  d <- data.frame(ID = 1:5, wt = c(60, 70, 75, 80, 90), stringsAsFactors = FALSE)
+  res <- .cur$.expandShapes(.cont_pairs(d), shapes = "lin")
+  center <- median(d$wt)
+  expect_equal(res$init[1],  0.1 / center, tolerance = 1e-10)
+  expect_equal(res$lower[1], -5 / center,  tolerance = 1e-10)
+  expect_equal(res$upper[1],  5 / center,  tolerance = 1e-10)
+})
+
+test_that(".expandShapes: identity shape auto-scales bounds by center", {
+  d <- data.frame(ID = 1:5, wt = c(60, 70, 75, 80, 90), stringsAsFactors = FALSE)
+  res <- .cur$.expandShapes(.cont_pairs(d), shapes = "identity")
+  center <- median(d$wt)
+  expect_equal(res$init[1],  0.1 / center, tolerance = 1e-10)
+  expect_equal(res$lower[1], -5 / center,  tolerance = 1e-10)
+  expect_equal(res$upper[1],  5 / center,  tolerance = 1e-10)
+})
+
+test_that(".expandShapes: log shape auto-scales bounds by abs(log(center))", {
+  d <- data.frame(ID = 1:5, wt = c(60, 70, 75, 80, 90), stringsAsFactors = FALSE)
+  res <- .cur$.expandShapes(.cont_pairs(d), shapes = "log")
+  center <- median(d$wt)
+  sc <- abs(log(center))
+  expect_equal(res$init[1],  0.1 / sc, tolerance = 1e-10)
+  expect_equal(res$lower[1], -5 / sc,  tolerance = 1e-10)
+  expect_equal(res$upper[1],  5 / sc,  tolerance = 1e-10)
+})
+
+test_that(".expandShapes: power shape keeps unscaled defaults", {
+  d <- data.frame(ID = 1:5, wt = c(60, 70, 75, 80, 90), stringsAsFactors = FALSE)
+  res <- .cur$.expandShapes(.cont_pairs(d), shapes = "power")
+  expect_equal(res$init[1],  0.1)
+  expect_equal(res$lower[1], -5)
+  expect_equal(res$upper[1],  5)
+})
+
+test_that(".expandShapes: user-supplied lin inits not overridden by auto-scaling", {
+  d <- data.frame(ID = 1:5, wt = c(60, 70, 75, 80, 90), stringsAsFactors = FALSE)
+  res <- .cur$.expandShapes(
+    .cont_pairs(d),
+    shapes = "lin",
+    inits = list(lin = list(est = 0.005, lower = -0.1, upper = 0.1))
+  )
+  expect_equal(res$init[1],  0.005)
+  expect_equal(res$lower[1], -0.1)
+  expect_equal(res$upper[1],  0.1)
+})
