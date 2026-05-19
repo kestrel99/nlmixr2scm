@@ -1195,3 +1195,37 @@ test_that(".expandShapes: user-supplied lin inits not overridden by auto-scaling
   expect_equal(res$lower[1], -0.1)
   expect_equal(res$upper[1],  0.1)
 })
+
+# =============================================================================
+# .resolveOFVTolerance
+# =============================================================================
+
+test_that(".resolveOFVTolerance: explicit numeric is returned as-is", {
+  mock_fit <- list(est = "focei")
+  expect_equal(.cur$.resolveOFVTolerance(mock_fit, 15), 15)
+})
+
+test_that(".resolveOFVTolerance: explicit zero overrides stochastic auto-detect", {
+  mock_fit <- list(est = "saem")
+  expect_equal(.cur$.resolveOFVTolerance(mock_fit, 0), 0)
+})
+
+test_that(".resolveOFVTolerance: NULL with focei returns 0", {
+  mock_fit <- list(est = "focei")
+  expect_equal(.cur$.resolveOFVTolerance(mock_fit, NULL), 0)
+})
+
+test_that(".resolveOFVTolerance: NULL with foce returns 0", {
+  mock_fit <- list(est = "foce")
+  expect_equal(.cur$.resolveOFVTolerance(mock_fit, NULL), 0)
+})
+
+test_that(".resolveOFVTolerance: NULL with saem returns 10", {
+  mock_fit <- list(est = "saem")
+  expect_equal(.cur$.resolveOFVTolerance(mock_fit, NULL), 10)
+})
+
+test_that(".resolveOFVTolerance: NULL with SAEM (uppercase) returns 10", {
+  mock_fit <- list(est = "SAEM")
+  expect_equal(.cur$.resolveOFVTolerance(mock_fit, NULL), 10)
+})

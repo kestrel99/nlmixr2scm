@@ -1559,6 +1559,24 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
   )
 }
 
+#' Resolve the effective OFV tolerance for criterion 1 of .isUnrealisticOFV()
+#'
+#' For deterministic estimators any OFV worsening is suspect; for stochastic
+#' estimators (SAEM) Monte Carlo noise can legitimately land a few OFV units
+#' above the parent even for a well-converged, uninformative candidate.  A
+#' tolerance of 10 is safely above typical SAEM noise (1-5 units) while
+#' catching genuine numerical failures (hundreds to millions of units).
+#'
+#' @param fit   reference nlmixr2 fit object (used for \code{fit$est})
+#' @param retryOFVTolerance numeric or \code{NULL}; when non-\code{NULL}
+#'   returned as-is; when \code{NULL} auto-detected from \code{fit$est}
+#' @return numeric scalar
+#' @noRd
+.resolveOFVTolerance <- function(fit, retryOFVTolerance) {
+  if (!is.null(retryOFVTolerance)) return(as.numeric(retryOFVTolerance))
+  if (tolower(fit$est) %in% c("saem")) 10 else 0
+}
+
 #' Fit all candidate models for one SCM step
 #'
 #' Builds a candidate UI for every row of \code{pairs} (adding or removing the
