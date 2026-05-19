@@ -1311,3 +1311,48 @@ test_that("runSCM: accepts new retry parameters without error (smoke)", {
   expect_equal(fmls$retrySmallInit,    0.01)
   expect_null(fmls$retryOFVTolerance)
 })
+
+test_that("runSCM: maxRetries=0 disables retry (parameter accepted, no error)", {
+  withr::local_tempdir(clean = TRUE)
+  base_fit <- .fit_base()
+  expect_no_error(
+    runSCM(
+      fit = base_fit,
+      pairsVec = list(list(var = "cl", covar = "WT", shapes = "power")),
+      searchType = "forward",
+      saveModels = FALSE,
+      workers = 1L,
+      maxRetries = 0L
+    )
+  )
+})
+
+test_that("runSCM: maxDeltaOFV passed through without error", {
+  withr::local_tempdir(clean = TRUE)
+  base_fit <- .fit_base()
+  expect_no_error(
+    runSCM(
+      fit = base_fit,
+      pairsVec = list(list(var = "cl", covar = "WT", shapes = "power")),
+      searchType = "forward",
+      saveModels = FALSE,
+      workers = 1L,
+      maxDeltaOFV = 1000
+    )
+  )
+})
+
+test_that("runSCM: retryOFVTolerance=0 passed through without error", {
+  withr::local_tempdir(clean = TRUE)
+  base_fit <- .fit_base()
+  expect_no_error(
+    runSCM(
+      fit = base_fit,
+      pairsVec = list(list(var = "cl", covar = "WT", shapes = "power")),
+      searchType = "forward",
+      saveModels = FALSE,
+      workers = 1L,
+      retryOFVTolerance = 0
+    )
+  )
+})

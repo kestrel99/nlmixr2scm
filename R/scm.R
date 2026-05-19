@@ -1699,80 +1699,6 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
         5
       }
 
-      ui_cand <- tryCatch(
-        {
-          if (add) {
-            # Forward: single-pass rebuild with context pairs + this candidate together.
-            # Never layer a second .builduiCovariate() call on a tainted intermediate UI.
-            cand_df <- data.frame(
-              var = nam_var,
-              covar = nam_covar,
-              covExpr = if (!is.null(cov_expr)) cov_expr else nam_covar,
-              init = cov_init,
-              lower = cov_lower,
-              upper = cov_upper,
-              stringsAsFactors = FALSE
-            )
-            if (!is.null(context_pairs) && nrow(context_pairs) > 0) {
-              ctx_df <- data.frame(
-                var = context_pairs$var,
-                covar = context_pairs$covar,
-                covExpr = if ("covExpr" %in% names(context_pairs)) {
-                  context_pairs$covExpr
-                } else {
-                  context_pairs$covar
-                },
-                init = if ("init" %in% names(context_pairs)) {
-                  context_pairs$init
-                } else {
-                  rep(0.1, nrow(context_pairs))
-                },
-                lower = if ("lower" %in% names(context_pairs)) {
-                  context_pairs$lower
-                } else {
-                  rep(-5, nrow(context_pairs))
-                },
-                upper = if ("upper" %in% names(context_pairs)) {
-                  context_pairs$upper
-                } else {
-                  rep(5, nrow(context_pairs))
-                },
-                stringsAsFactors = FALSE
-              )
-              all_pairs <- rbind(ctx_df, cand_df)
-            } else {
-              all_pairs <- cand_df
-            }
-            .rebuildUiFromPairs(base_ui, all_pairs) # nolint: object_usage_linter.
-          } else {
-            # Backward: rebuild from base with all context pairs except this candidate
-            cp_minus <- if (
-              !is.null(context_pairs) && nrow(context_pairs) > 0
-            ) {
-              context_pairs[
-                !(context_pairs$var == nam_var &
-                  context_pairs$covar == nam_covar),
-                ,
-                drop = FALSE
-              ]
-            } else {
-              NULL
-            }
-            .rebuildUiFromPairs(base_ui, cp_minus) # nolint: object_usage_linter.
-          }
-        },
-        error = function(e) {
-          list(
-            .failed = TRUE,
-            .reason = conditionMessage(e),
-            .pair = paste0(nam_covar, " ~ ", nam_var)
-          )
-        }
-      )
-      if (isTRUE(ui_cand$.failed)) {
-        return(ui_cand)
-      }
-
       cand_control <- tryCatch(
         {
           ctrl <- if (!is.null(control)) control else fit$control
@@ -1782,8 +1708,8 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
         error = function(e) NULL
       )
 
-      direction <- if (add) "Forward" else "Backward" # nolint: object_usage_linter.
-      shape_lbl <- # nolint: object_usage_linter.
+      direction <- if (add) "Forward" else "Backward"
+      shape_lbl <-
         if (!is.na(cov_shape) && nzchar(cov_shape)) {
           paste0(" [", cov_shape, "]")
         } else {
@@ -1795,44 +1721,191 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
       ))
       cli::cli_rule()
 
-      x <- tryCatch(
-        suppressWarnings(nlmixr2est::nlmixr2(
-          ui_cand,
-          data,
-          fit$est,
-          control = cand_control
-        )),
-        error = function(e) {
-          list(
-            .failed = TRUE,
-            .reason = conditionMessage(e),
+      orig_cov_init <- cov_init
+
+      # Build ctx_df once — context pairs do not change between retry attempts
+      ctx_df <- if (!is.null(context_pairs) && nrow(context_pairs) > 0) {
+        data.frame(
+          var    = context_pairs$var,
+          covar  = context_pairs$covar,
+          covExpr = if ("covExpr" %in% names(context_pairs)) {
+            context_pairs$covExpr
+          } else {
+            context_pairs$covar
+          },
+          init  = if ("init"  %in% names(context_pairs)) context_pairs$init  else rep(0.1, nrow(context_pairs)),
+          lower = if ("lower" %in% names(context_pairs)) context_pairs$lower else rep(-5,  nrow(context_pairs)),
+          upper = if ("upper" %in% names(context_pairs)) context_pairs$upper else rep(5,   nrow(context_pairs)),
+          stringsAsFactors = FALSE
+        )
+      } else {
+        NULL
+      }
+
+      # For backward elimination: build the candidate UI once (no init to vary)
+      ui_cand <- if (!add) {
+        cp_minus <- if (!is.null(context_pairs) && nrow(context_pairs) > 0) {
+          context_pairs[
+            !(context_pairs$var == nam_var & context_pairs$covar == nam_covar),
+            , drop = FALSE
+          ]
+        } else {
+          NULL
+        }
+        tryCatch(
+          .rebuildUiFromPairs(base_ui, cp_minus),
+          error = function(e) list(
+            .failed = TRUE, .reason = conditionMessage(e),
             .pair = paste0(nam_covar, " ~ ", nam_var)
           )
-        }
-      )
-      if (isTRUE(x$.failed)) {
-        return(x)
-      }
-
-      # dObjf > 0 means the model change improved the fit:
-      #   forward:  candidate has lower OFV than reference  -> fit$objf - x$objf
-      #   backward: removal raises OFV relative to reference -> x$objf - fit$objf
-      dObjf <- if (add) fit$objf - x$objf else x$objf - fit$objf
-      if (is.na(dObjf)) {
-        return(list(
-          .failed = TRUE,
-          .reason = "NA objective function value",
-          .pair = paste0(nam_covar, " ~ ", nam_var)
-        ))
-      }
-      dof <- if (add) {
-        length(x$finalUiEnv$ini$est) - length(fit$finalUiEnv$ini$est)
+        )
       } else {
-        length(fit$finalUiEnv$ini$est) - length(x$finalUiEnv$ini$est)
+        NULL  # forward path builds ui inside the loop per attempt
       }
-      pchisqr <- if (dObjf > 0) 1 - stats::pchisq(dObjf, df = dof) else 1
+      if (isTRUE(ui_cand$.failed)) return(ui_cand)
 
-      # covarEffect: from the candidate fit when adding, from the full model when removing
+      loop_result <- NULL
+
+      for (attempt in 0:maxRetries) {
+        cov_init_attempt <- if (attempt == 0L) {
+          orig_cov_init
+        } else if (attempt %% 2L == 1L) {
+          orig_cov_init * exp(stats::rnorm(1L, 0, retryPerturbSD))
+        } else {
+          retrySmallInit
+        }
+
+        ui_attempt <- tryCatch(
+          {
+            if (add) {
+              cand_df_a <- data.frame(
+                var     = nam_var,
+                covar   = nam_covar,
+                covExpr = if (!is.null(cov_expr)) cov_expr else nam_covar,
+                init    = cov_init_attempt,
+                lower   = cov_lower,
+                upper   = cov_upper,
+                stringsAsFactors = FALSE
+              )
+              all_pairs_a <- if (!is.null(ctx_df)) rbind(ctx_df, cand_df_a) else cand_df_a
+              .rebuildUiFromPairs(base_ui, all_pairs_a)
+            } else {
+              ui_cand
+            }
+          },
+          error = function(e) {
+            list(
+              .failed = TRUE,
+              .reason = conditionMessage(e),
+              .pair   = paste0(nam_covar, " ~ ", nam_var)
+            )
+          }
+        )
+        if (isTRUE(ui_attempt$.failed)) return(ui_attempt)
+
+        x <- tryCatch(
+          suppressWarnings(nlmixr2est::nlmixr2(
+            ui_attempt,
+            data,
+            fit$est,
+            control = cand_control
+          )),
+          error = function(e) {
+            list(
+              .failed = TRUE,
+              .reason = conditionMessage(e),
+              .pair   = paste0(nam_covar, " ~ ", nam_var)
+            )
+          }
+        )
+
+        if (isTRUE(x$.failed)) {
+          if (attempt < maxRetries) next else return(x)
+        }
+
+        dObjf <- if (add) fit$objf - x$objf else x$objf - fit$objf
+        if (is.na(dObjf)) {
+          if (attempt < maxRetries) {
+            next
+          } else {
+            return(list(
+              .failed = TRUE,
+              .reason = "NA objective function value",
+              .pair   = paste0(nam_covar, " ~ ", nam_var)
+            ))
+          }
+        }
+
+        dof <- if (add) {
+          length(x$finalUiEnv$ini$est) - length(fit$finalUiEnv$ini$est)
+        } else {
+          length(fit$finalUiEnv$ini$est) - length(x$finalUiEnv$ini$est)
+        }
+        pchisqr <- if (dObjf > 0) 1 - stats::pchisq(dObjf, df = dof) else 1
+
+        # For backward elimination the unrealistic-OFV criteria are not applied:
+        # removing a significant covariate legitimately produces a large OFV
+        # increase (pchisqr ≈ 0), which would incorrectly trigger criterion 2.
+        # Backward steps always accept the first converged result.
+        if (!add) {
+          loop_result <- list(x = x, dObjf = dObjf, dof = dof, pchisqr = pchisqr)
+          break
+        }
+
+        if (!.isUnrealisticOFV(
+          x$objf, fit$objf, dObjf, pchisqr, maxDeltaOFV, effective_tolerance
+        )) {
+          loop_result <- list(x = x, dObjf = dObjf, dof = dof, pchisqr = pchisqr)
+          break
+        }
+
+        trigger <- if (x$objf > fit$objf + effective_tolerance) {
+          paste0(
+            "OFV increased vs parent (",
+            round(x$objf, 3), " > ", round(fit$objf, 3),
+            if (effective_tolerance > 0) paste0(" + ", effective_tolerance) else "",
+            ")"
+          )
+        } else if (pchisqr < .Machine$double.eps) {
+          paste0("p-value underflow (dOFV = ", round(dObjf, 3), ")")
+        } else {
+          paste0("dOFV (", round(dObjf, 3), ") exceeds maxDeltaOFV (", maxDeltaOFV, ")")
+        }
+
+        if (attempt < maxRetries) {
+          next_strategy <- if ((attempt + 1L) %% 2L == 1L) "perturbed" else "small"
+          cli::cli_warn(c(
+            "!" = paste0(
+              "{nam_covar} ~ {nam_var}: unrealistic OFV on attempt ",
+              attempt + 1L, "/", maxRetries + 1L, ": ", trigger, "."
+            ),
+            "i" = "Retrying with {next_strategy} init."
+          ))
+        } else {
+          # All retries exhausted and result is still flagged as unrealistic.
+          # Warn and accept the last attempt's result rather than hard-failing,
+          # so that the candidate appears in the results table (with appropriate
+          # OFV/p-value) and the search can continue.  The result may be
+          # non-significant (worsening-only) or suspiciously significant
+          # (p-value underflow / large dOFV); downstream selection logic will
+          # handle it via the configured p-value threshold.
+          cli::cli_warn(c(
+            "!" = paste0(
+              "{nam_covar} ~ {nam_var}: OFV unrealistic after ", maxRetries,
+              if (maxRetries == 1L) " retry" else " retries",
+              " (", trigger, "); accepting last result."
+            )
+          ))
+          loop_result <- list(x = x, dObjf = dObjf, dof = dof, pchisqr = pchisqr)
+          break
+        }
+      }
+
+      x       <- loop_result$x
+      dObjf   <- loop_result$dObjf
+      dof     <- loop_result$dof
+      pchisqr <- loop_result$pchisqr
+
       covarEffect <- if (add) {
         x$parFixedDf[covNames, "Estimate"]
       } else {
@@ -1845,20 +1918,20 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
       }
 
       stats <- data.frame(
-        step = stepIdx,
-        covar = nam_covar,
-        var = nam_var,
-        shape = cov_shape,
-        objf = x$objf,
-        deltObjf = dObjf,
-        AIC = x$AIC,
-        BIC = x$BIC,
-        numParams = length(x$finalUiEnv$ini$est),
-        qchisqr = stats::qchisq(1 - pVal, dof),
-        pchisqr = pchisqr,
-        included = if (add) "no" else "",
-        searchType = if (add) "forward" else "backward",
-        covNames = covNames,
+        step        = stepIdx,
+        covar       = nam_covar,
+        var         = nam_var,
+        shape       = cov_shape,
+        objf        = x$objf,
+        deltObjf    = dObjf,
+        AIC         = x$AIC,
+        BIC         = x$BIC,
+        numParams   = length(x$finalUiEnv$ini$est),
+        qchisqr     = stats::qchisq(1 - pVal, dof),
+        pchisqr     = pchisqr,
+        included    = if (add) "no" else "",
+        searchType  = if (add) "forward" else "backward",
+        covNames    = covNames,
         covarEffect = covarEffect,
         bsvReduction = bsvReduction,
         stringsAsFactors = FALSE
