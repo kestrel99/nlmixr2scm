@@ -1229,3 +1229,70 @@ test_that(".resolveOFVTolerance: NULL with SAEM (uppercase) returns 10", {
   mock_fit <- list(est = "SAEM")
   expect_equal(.cur$.resolveOFVTolerance(mock_fit, NULL), 10)
 })
+
+# =============================================================================
+# .isUnrealisticOFV
+# =============================================================================
+
+test_that(".isUnrealisticOFV: realistic result returns FALSE", {
+  expect_false(.cur$.isUnrealisticOFV(
+    x_objf = 460, ref_objf = 470, dObjf = 10,
+    pchisqr = 0.01, maxDeltaOFV = Inf, effective_tolerance = 0
+  ))
+})
+
+test_that(".isUnrealisticOFV: OFV above parent triggers TRUE (criterion 1)", {
+  expect_true(.cur$.isUnrealisticOFV(
+    x_objf = 480, ref_objf = 470, dObjf = -10,
+    pchisqr = 1, maxDeltaOFV = Inf, effective_tolerance = 0
+  ))
+})
+
+test_that(".isUnrealisticOFV: OFV above parent but within tolerance returns FALSE", {
+  expect_false(.cur$.isUnrealisticOFV(
+    x_objf = 475, ref_objf = 470, dObjf = -5,
+    pchisqr = 1, maxDeltaOFV = Inf, effective_tolerance = 10
+  ))
+})
+
+test_that(".isUnrealisticOFV: OFV above parent beyond tolerance triggers TRUE", {
+  expect_true(.cur$.isUnrealisticOFV(
+    x_objf = 500, ref_objf = 470, dObjf = -30,
+    pchisqr = 1, maxDeltaOFV = Inf, effective_tolerance = 10
+  ))
+})
+
+test_that(".isUnrealisticOFV: p-value underflow triggers TRUE (criterion 2)", {
+  expect_true(.cur$.isUnrealisticOFV(
+    x_objf = 100, ref_objf = 470, dObjf = 370,
+    pchisqr = 0, maxDeltaOFV = Inf, effective_tolerance = 0
+  ))
+})
+
+test_that(".isUnrealisticOFV: pchisqr just above .Machine$double.eps is FALSE", {
+  expect_false(.cur$.isUnrealisticOFV(
+    x_objf = 100, ref_objf = 470, dObjf = 370,
+    pchisqr = .Machine$double.eps * 2, maxDeltaOFV = Inf, effective_tolerance = 0
+  ))
+})
+
+test_that(".isUnrealisticOFV: dObjf above maxDeltaOFV triggers TRUE (criterion 3)", {
+  expect_true(.cur$.isUnrealisticOFV(
+    x_objf = 100, ref_objf = 470, dObjf = 5000,
+    pchisqr = 0.001, maxDeltaOFV = 1000, effective_tolerance = 0
+  ))
+})
+
+test_that(".isUnrealisticOFV: dObjf below maxDeltaOFV returns FALSE", {
+  expect_false(.cur$.isUnrealisticOFV(
+    x_objf = 100, ref_objf = 470, dObjf = 500,
+    pchisqr = 0.001, maxDeltaOFV = 1000, effective_tolerance = 0
+  ))
+})
+
+test_that(".isUnrealisticOFV: maxDeltaOFV = Inf never triggers criterion 3", {
+  expect_false(.cur$.isUnrealisticOFV(
+    x_objf = -1e9, ref_objf = 470, dObjf = 1e9 + 470,
+    pchisqr = 0.001, maxDeltaOFV = Inf, effective_tolerance = 0
+  ))
+})

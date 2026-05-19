@@ -1577,6 +1577,23 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
   if (tolower(fit$est) %in% c("saem")) 10 else 0
 }
 
+#' Check whether a candidate OFV result is unrealistic and should trigger a retry
+#'
+#' @param x_objf           OFV of the candidate fit
+#' @param ref_objf         OFV of the reference (parent) fit
+#' @param dObjf            OFV improvement: ref - x for forward, x - ref for backward
+#' @param pchisqr          chi-squared p-value for the improvement
+#' @param maxDeltaOFV      user-specified ceiling on plausible OFV improvement
+#' @param effective_tolerance margin added to ref_objf before criterion 1 fires
+#' @return logical scalar
+#' @noRd
+.isUnrealisticOFV <- function(x_objf, ref_objf, dObjf, pchisqr,
+                               maxDeltaOFV, effective_tolerance) {
+  x_objf > ref_objf + effective_tolerance ||
+    pchisqr < .Machine$double.eps ||
+    dObjf > maxDeltaOFV
+}
+
 #' Fit all candidate models for one SCM step
 #'
 #' Builds a candidate UI for every row of \code{pairs} (adding or removing the
