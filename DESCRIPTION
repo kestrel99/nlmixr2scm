@@ -1,6 +1,6 @@
 Package: nlmixr2scm
 Title: Stepwise Covariate Modeling for nlmixr2 Models
-Version: 0.1
+Version: 0.2
 Authors@R: c(
     person("Matthew", "Fidler", email = "matthew.fidler@gmail.com", role = "aut",
            comment = c(ORCID = "0000-0001-8538-6691")),
