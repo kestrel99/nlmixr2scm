@@ -96,6 +96,14 @@ test_that(".autoScaleInitSpec: log shape scales by abs(log(center))", {
   expect_equal(res$upper,  5 / sc,  tolerance = 1e-10)
 })
 
+test_that(".autoScaleInitSpec: log with negative center scales by abs(log(abs(center)))", {
+  res <- .cur$.autoScaleInitSpec(NULL, "log", center = -70)
+  sc <- abs(log(abs(-70)))
+  expect_equal(res$est,   0.1 / sc, tolerance = 1e-10)
+  expect_equal(res$lower, -5 / sc,  tolerance = 1e-10)
+  expect_equal(res$upper,  5 / sc,  tolerance = 1e-10)
+})
+
 test_that(".autoScaleInitSpec: lin with center = NA falls back to unscaled defaults", {
   expect_warning(
     res <- .cur$.autoScaleInitSpec(NULL, "lin", center = NA_real_),
@@ -112,6 +120,8 @@ test_that(".autoScaleInitSpec: lin with center = 0 falls back to unscaled defaul
     regexp = "Cannot auto-scale"
   )
   expect_equal(res$est, 0.1)
+  expect_equal(res$lower, -5)
+  expect_equal(res$upper, 5)
 })
 
 test_that(".autoScaleInitSpec: log with center = 1 falls back to unscaled defaults", {
