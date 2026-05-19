@@ -1296,3 +1296,18 @@ test_that(".isUnrealisticOFV: maxDeltaOFV = Inf never triggers criterion 3", {
     pchisqr = 0.001, maxDeltaOFV = Inf, effective_tolerance = 0
   ))
 })
+
+test_that("runSCM: accepts new retry parameters without error (smoke)", {
+  # Verify the new parameters exist in the formals — no fitting needed
+  fmls <- formals(.cur$runSCM)
+  expect_true("maxRetries"         %in% names(fmls))
+  expect_true("maxDeltaOFV"        %in% names(fmls))
+  expect_true("retryPerturbSD"     %in% names(fmls))
+  expect_true("retrySmallInit"     %in% names(fmls))
+  expect_true("retryOFVTolerance"  %in% names(fmls))
+  expect_equal(fmls$maxRetries,        3L)
+  expect_equal(fmls$maxDeltaOFV,       Inf)
+  expect_equal(fmls$retryPerturbSD,    0.5)
+  expect_equal(fmls$retrySmallInit,    0.01)
+  expect_null(fmls$retryOFVTolerance)
+})

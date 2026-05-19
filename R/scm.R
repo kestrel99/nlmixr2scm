@@ -116,6 +116,21 @@
 #' @param confirm logical; if \code{TRUE} (default) and the session is
 #'   interactive, the user is prompted to confirm before the search begins.
 #'   Set to \code{FALSE} to skip the prompt (useful in scripts or tests).
+#' @param maxRetries integer; maximum number of retry attempts per candidate
+#'   when the OFV is deemed unrealistic.  Default \code{3L}.  Set to \code{0}
+#'   to disable the retry mechanism entirely.
+#' @param maxDeltaOFV numeric; absolute ceiling on OFV improvement.  A
+#'   candidate whose dOFV exceeds this value is flagged as unrealistic and
+#'   retried.  Default \code{Inf} (disabled; only criterion 1 and 2 apply).
+#' @param retryPerturbSD numeric; standard deviation of the log-normal
+#'   perturbation applied to \code{cov_init} on odd-numbered retries.  Default
+#'   \code{0.5}.
+#' @param retrySmallInit numeric; covariate theta init used on even-numbered
+#'   retries as a near-zero safe-harbour.  Default \code{0.01}.
+#' @param retryOFVTolerance numeric or \code{NULL}; the margin (in OFV units)
+#'   by which the candidate OFV must exceed the parent before a retry is
+#'   triggered (criterion 1).  \code{NULL} (default) auto-detects: \code{10}
+#'   for SAEM (stochastic noise), \code{0} for all other estimators.
 #'
 #' @return A list with elements \code{summaryTable} (combined forward and
 #'   backward results), \code{resFwd} (list of final fit and step table from
@@ -179,7 +194,12 @@ runSCM <- function(
   searchType = c("scm", "forward", "backward"),
   restart = FALSE,
   workers = NULL,
-  confirm = TRUE
+  confirm = TRUE,
+  maxRetries = 3L,
+  maxDeltaOFV = Inf,
+  retryPerturbSD = 0.5,
+  retrySmallInit = 0.01,
+  retryOFVTolerance = NULL
 ) {
   if (!is.numeric(stats::AIC(fit))) {
     cli::cli_alert_danger(
@@ -419,7 +439,12 @@ runSCM <- function(
         saveModels = saveModels,
         verbose = verbose,
         control = control,
-        print = print
+        print = print,
+        maxRetries = maxRetries,
+        maxDeltaOFV = maxDeltaOFV,
+        retryPerturbSD = retryPerturbSD,
+        retrySmallInit = retrySmallInit,
+        retryOFVTolerance = retryOFVTolerance
       )
       resBck <- backwardSearch(
         pairs,
@@ -435,7 +460,12 @@ runSCM <- function(
         saveModels = saveModels,
         verbose = verbose,
         control = control,
-        print = print
+        print = print,
+        maxRetries = maxRetries,
+        maxDeltaOFV = maxDeltaOFV,
+        retryPerturbSD = retryPerturbSD,
+        retrySmallInit = retrySmallInit,
+        retryOFVTolerance = retryOFVTolerance
       )
       data <- NULL # release temporary SCM dataset
       summaryTable <- Reduce(rbind, list(resFwd[[2]], resBck[[2]]))
@@ -462,7 +492,12 @@ runSCM <- function(
         saveModels = saveModels,
         verbose = verbose,
         control = control,
-        print = print
+        print = print,
+        maxRetries = maxRetries,
+        maxDeltaOFV = maxDeltaOFV,
+        retryPerturbSD = retryPerturbSD,
+        retrySmallInit = retrySmallInit,
+        retryOFVTolerance = retryOFVTolerance
       )
       data <- NULL # release temporary SCM dataset
       .printFinalSCMSummary(
@@ -490,7 +525,12 @@ runSCM <- function(
         saveModels = saveModels,
         verbose = verbose,
         control = control,
-        print = print
+        print = print,
+        maxRetries = maxRetries,
+        maxDeltaOFV = maxDeltaOFV,
+        retryPerturbSD = retryPerturbSD,
+        retrySmallInit = retrySmallInit,
+        retryOFVTolerance = retryOFVTolerance
       )
       data <- NULL # release temporary SCM dataset
       .printFinalSCMSummary(
@@ -1621,7 +1661,12 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
   stepIdx,
   add,
   control = NULL,
-  print = 100
+  print = 100,
+  maxRetries = 3L,
+  maxDeltaOFV = Inf,
+  retryPerturbSD = 0.5,
+  retrySmallInit = 0.01,
+  effective_tolerance = 0
 ) {
   raw_results <- nlmixr2utils::.plap(
     # nolint: object_usage_linter.
@@ -1896,7 +1941,12 @@ forwardSearch <- function(
   saveModels = TRUE,
   verbose = FALSE,
   control = NULL,
-  print = 100
+  print = 100,
+  maxRetries = 3L,
+  maxDeltaOFV = Inf,
+  retryPerturbSD = 0.5,
+  retrySmallInit = 0.01,
+  retryOFVTolerance = NULL
 ) {
   if (!inherits(fit, "nlmixr2FitCore")) {
     stop("'fit' needs to be a nlmixr2 fit")
@@ -1905,6 +1955,7 @@ forwardSearch <- function(
     stop("please specify outputDir for forward search")
   }
 
+  effective_tolerance <- .resolveOFVTolerance(fit, retryOFVTolerance)
   base_ui <- fit$finalUiEnv # fixed -- never updated
   orig_pairs <- pairs # preserved for resume reconstruction
   accepted_pairs <- NULL
@@ -1993,7 +2044,12 @@ forwardSearch <- function(
       stepIdx,
       add = TRUE,
       control = control,
-      print = print
+      print = print,
+      maxRetries = maxRetries,
+      maxDeltaOFV = maxDeltaOFV,
+      retryPerturbSD = retryPerturbSD,
+      retrySmallInit = retrySmallInit,
+      effective_tolerance = effective_tolerance
     )
     if (length(results) == 0) {
       break
@@ -2168,7 +2224,12 @@ backwardSearch <- function(
   saveModels = TRUE,
   verbose = FALSE,
   control = NULL,
-  print = 100
+  print = 100,
+  maxRetries = 3L,
+  maxDeltaOFV = Inf,
+  retryPerturbSD = 0.5,
+  retrySmallInit = 0.01,
+  retryOFVTolerance = NULL
 ) {
   if (!inherits(fitorig, "nlmixr2FitCore")) {
     stop("'fitorig' needs to be a nlmixr2 fit")
@@ -2177,6 +2238,7 @@ backwardSearch <- function(
     stop("please specify outputDir for backward search")
   }
 
+  effective_tolerance <- .resolveOFVTolerance(fitorig, retryOFVTolerance)
   base_ui <- fitorig$finalUiEnv # fixed -- never updated
   resTableComplete <- NULL
   stepIdx <- 1
@@ -2368,7 +2430,12 @@ backwardSearch <- function(
       stepIdx,
       add = FALSE,
       control = control,
-      print = print
+      print = print,
+      maxRetries = maxRetries,
+      maxDeltaOFV = maxDeltaOFV,
+      retryPerturbSD = retryPerturbSD,
+      retrySmallInit = retrySmallInit,
+      effective_tolerance = effective_tolerance
     )
     if (length(results) == 0) {
       break
