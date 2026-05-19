@@ -50,6 +50,88 @@ test_that("SCM helper functions remain internal-only", {
 }
 
 # =============================================================================
+# .autoScaleInitSpec
+# =============================================================================
+
+test_that(".autoScaleInitSpec: non-NULL spec bypasses scaling (scalar)", {
+  res <- .cur$.autoScaleInitSpec(0.75, "lin", center = 70)
+  expect_equal(res$est, 0.75)
+  expect_equal(res$lower, -5)
+  expect_equal(res$upper, 5)
+})
+
+test_that(".autoScaleInitSpec: non-NULL spec bypasses scaling (full list)", {
+  res <- .cur$.autoScaleInitSpec(list(est = 0.5, lower = -1, upper = 1), "lin", center = 70)
+  expect_equal(res$est, 0.5)
+  expect_equal(res$lower, -1)
+  expect_equal(res$upper, 1)
+})
+
+test_that(".autoScaleInitSpec: power shape returns unscaled defaults", {
+  res <- .cur$.autoScaleInitSpec(NULL, "power", center = 70)
+  expect_equal(res$est, 0.1)
+  expect_equal(res$lower, -5)
+  expect_equal(res$upper, 5)
+})
+
+test_that(".autoScaleInitSpec: lin shape scales by abs(center)", {
+  res <- .cur$.autoScaleInitSpec(NULL, "lin", center = 70)
+  expect_equal(res$est,   0.1 / 70, tolerance = 1e-10)
+  expect_equal(res$lower, -5 / 70,  tolerance = 1e-10)
+  expect_equal(res$upper,  5 / 70,  tolerance = 1e-10)
+})
+
+test_that(".autoScaleInitSpec: identity shape scales by abs(center)", {
+  res <- .cur$.autoScaleInitSpec(NULL, "identity", center = 70)
+  expect_equal(res$est,   0.1 / 70, tolerance = 1e-10)
+  expect_equal(res$lower, -5 / 70,  tolerance = 1e-10)
+  expect_equal(res$upper,  5 / 70,  tolerance = 1e-10)
+})
+
+test_that(".autoScaleInitSpec: log shape scales by abs(log(center))", {
+  res <- .cur$.autoScaleInitSpec(NULL, "log", center = 70)
+  sc <- abs(log(70))
+  expect_equal(res$est,   0.1 / sc, tolerance = 1e-10)
+  expect_equal(res$lower, -5 / sc,  tolerance = 1e-10)
+  expect_equal(res$upper,  5 / sc,  tolerance = 1e-10)
+})
+
+test_that(".autoScaleInitSpec: lin with center = NA falls back to unscaled defaults", {
+  expect_warning(
+    res <- .cur$.autoScaleInitSpec(NULL, "lin", center = NA_real_),
+    regexp = "Cannot auto-scale"
+  )
+  expect_equal(res$est, 0.1)
+  expect_equal(res$lower, -5)
+  expect_equal(res$upper, 5)
+})
+
+test_that(".autoScaleInitSpec: lin with center = 0 falls back to unscaled defaults", {
+  expect_warning(
+    res <- .cur$.autoScaleInitSpec(NULL, "lin", center = 0),
+    regexp = "Cannot auto-scale"
+  )
+  expect_equal(res$est, 0.1)
+})
+
+test_that(".autoScaleInitSpec: log with center = 1 falls back to unscaled defaults", {
+  expect_warning(
+    res <- .cur$.autoScaleInitSpec(NULL, "log", center = 1),
+    regexp = "Cannot auto-scale"
+  )
+  expect_equal(res$est, 0.1)
+  expect_equal(res$lower, -5)
+  expect_equal(res$upper, 5)
+})
+
+test_that(".autoScaleInitSpec: lin with negative center scales by abs value", {
+  res <- .cur$.autoScaleInitSpec(NULL, "lin", center = -70)
+  expect_equal(res$est,   0.1 / 70, tolerance = 1e-10)
+  expect_equal(res$lower, -5 / 70,  tolerance = 1e-10)
+  expect_equal(res$upper,  5 / 70,  tolerance = 1e-10)
+})
+
+# =============================================================================
 # .parseInitSpec
 # =============================================================================
 

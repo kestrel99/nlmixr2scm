@@ -104,6 +104,56 @@
   list(est = 0.1, lower = -5, upper = 5)
 }
 
+#' Auto-scale covariate theta init spec for non-dimensionless shapes
+#'
+#' For \code{lin}, \code{log}, and \code{identity} shapes the default theta
+#' bounds \code{(-5, 5)} are wildly inappropriate when the covariate has
+#' physiological units (e.g. weight in kg).  This function scales the defaults
+#' to be numerically equivalent to the \code{power} shape's defaults.
+#'
+#' The scaling is derived from the first-order equivalence
+#' \code{log(x/c) \approx (x-c)/c}, so
+#' \code{theta_lin = theta_power / |center|}.
+#'
+#' @param spec scalar, named list, or \code{NULL}. When non-\code{NULL},
+#'   passed directly to \code{.parseInitSpec()} with no scaling.
+#' @param shape character; one of the built-in shape names
+#' @param center numeric or \code{NULL}; centering value (covariate median)
+#' @param label character; used in warning messages to identify the pair
+#' @return list(est, lower, upper)
+#' @noRd
+.autoScaleInitSpec <- function(spec, shape, center, label = "") {
+  if (!is.null(spec)) {
+    return(.parseInitSpec(spec))
+  }
+  if (!shape %in% c("lin", "log", "identity")) {
+    return(.parseInitSpec(NULL))
+  }
+  if (is.null(center) || is.na(center) || center == 0) {
+    cli::cli_warn(c(
+      "!" = "Cannot auto-scale '{shape}' bounds{if (nzchar(label)) paste0(' for ', label) else ''}: center is NA, zero, or missing.",
+      "i" = "Using unscaled defaults. Supply custom 'inits' for this shape to suppress."
+    ))
+    return(.parseInitSpec(NULL))
+  }
+  scale <- switch(shape,
+    lin      = abs(center),
+    identity = abs(center),
+    log      = {
+      lc <- abs(log(abs(center)))
+      if (lc < .Machine$double.eps) {
+        cli::cli_warn(c(
+          "!" = "Cannot auto-scale 'log' bounds{if (nzchar(label)) paste0(' for ', label) else ''}: |log(center)| ≈ 0 (center ≈ 1).",
+          "i" = "Using unscaled defaults."
+        ))
+        return(.parseInitSpec(NULL))
+      }
+      lc
+    }
+  )
+  list(est = 0.1 / scale, lower = -5 / scale, upper = 5 / scale)
+}
+
 #' Build the covariate expression string for a given shape name
 #'
 #' @param shape  character; key into \code{.SCM_SHAPES} or \code{customShapes}
