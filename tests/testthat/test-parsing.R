@@ -259,7 +259,7 @@ test_that("Add covariate to the ui", {
 # ==== idColumn
 
 test_that("Extract column corresponding to  Individual", {
-  funstring1 <- .idColumn(Theoph)
+  funstring1 <- .cur$.idColumn(Theoph)
   funstring2 <- "ID"
 
   expect_equal(funstring1, funstring2)
@@ -297,11 +297,11 @@ test_that("Build ui from the covariate", {
   covariate <- "WT"
 
   funstring1 <- intersect(
-    (.builduiCovariate(ui, varName, covariate, add = TRUE))$iniDf$name,
+    (.cur$.builduiCovariate(ui, varName, covariate, add = TRUE))$iniDf$name,
     "cov_WT_ka"
   )
   funstring2 <- "cov_WT_ka"
-  funstring3 <- (.builduiCovariate(
+  funstring3 <- (.cur$.builduiCovariate(
     ui,
     varName,
     covariate,
@@ -332,8 +332,8 @@ test_that("Build ui from the covariate sequentially on a tainted ui", {
   }
 
   ui <- nlmixr2est::nlmixr(one.cmt)
-  ui <- .builduiCovariate(ui, "ka", "WT", add = TRUE)
-  ui <- .builduiCovariate(ui, "cl", "WT", add = TRUE)
+  ui <- .cur$.builduiCovariate(ui, "ka", "WT", add = TRUE)
+  ui <- .cur$.builduiCovariate(ui, "cl", "WT", add = TRUE)
   ui_strs <- vapply(
     ui$lstExpr,
     function(x) paste(deparse(x, width.cutoff = 500L), collapse = " "),
