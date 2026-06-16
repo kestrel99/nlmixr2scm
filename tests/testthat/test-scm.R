@@ -1358,3 +1358,24 @@ test_that("runSCM: retryOFVTolerance=0 passed through without error", {
     )
   )
 })
+
+
+# =============================================================================
+# cli brace escaping — failure messages containing {} must not crash cli_warn
+# =============================================================================
+
+test_that(".fitCandidatePairs: braces in failure reason do not crash cli", {
+  base_fit <- .fit_base()
+  bad <- data.frame(
+    var = "cl", covar = "wt{x}", covExpr = "WT", shape = "power",
+    init = 0.1, lower = -5, upper = 5, stringsAsFactors = FALSE
+  )
+  # Should fail with the "All … failed" stop(), not a cli parse error
+  expect_error(
+    .cur$.fitCandidatePairs(
+      pairs = bad, base_ui = base_fit$ui, fit = base_fit,
+      data = .theoph, pVal = 0.05, stepIdx = 1L, add = TRUE, print = 0
+    ),
+    "All 1 candidate fit\\(s\\) failed"
+  )
+})
