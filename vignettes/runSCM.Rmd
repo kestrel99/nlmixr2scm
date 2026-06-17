@@ -176,7 +176,7 @@ When the search space is a full Cartesian product of parameters × covariates, u
 `varsVec` and `covarsVec` instead of enumerating every pair.
 
 The example below tests `wt~cl`, `wt~v`, `sex~cl`, and `sex~v`, with both power and
-linear shapes for the continuous covariate — eight candidates in total.
+linear shapes for the continuous covariate — six candidates in total.
 
 ```{r scm, message = FALSE}
 scm <- runSCM(
@@ -236,7 +236,7 @@ Key columns:
 | `pchisqr` | p-value from chi-squared test (1 df) |
 | `bsvReduction` | Reduction in BSV for `var` (%) |
 | `covarEffect` | Estimated effect magnitude at the covariate extremes |
-| `included` | `"yes"` (accepted), `"no"` (rejected), `"dropped"` (removed in backward) |
+| `included` | `"yes"` (added in forward), `"no"` (rejected in forward), `"dropped"` (removed in backward), `"retained"` (tested in backward but kept in model) |
 
 #### Forward search detail
 

@@ -1358,3 +1358,30 @@ test_that("runSCM: retryOFVTolerance=0 passed through without error", {
     )
   )
 })
+
+# =============================================================================
+# summaryTable$included: backward removals labeled "dropped" (not "yes")
+# =============================================================================
+
+test_that("runSCM: backward-removed covariates labeled 'dropped' in summaryTable", {
+  withr::local_tempdir(clean = TRUE)
+  base_fit <- .fit_base()
+  # Backward-only: pre-include WT~cl so it can be tested for removal
+  res <- runSCM(
+    fit = base_fit,
+    pairsVec = list(list(var = "cl", covar = "WT", shapes = "power")),
+    searchType = "backward",
+    includedRelations = list(list(var = "cl", covar = "WT", shapes = "power")),
+    saveModels = FALSE,
+    workers = 1L
+  )
+
+  st <- res$summaryTable
+  expect_true("included" %in% names(st))
+
+  # Backward rows must NEVER use "yes"
+  bck <- st[st$searchType == "backward", , drop = FALSE]
+  expect_false(any(bck$included == "yes"))
+  # And the included column should only contain the documented tokens
+  expect_true(all(st$included %in% c("yes", "no", "dropped", "retained")))
+})
