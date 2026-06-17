@@ -35,10 +35,14 @@
 #'   \code{-99}) or a character string (e.g. \code{"."}) to also flag that
 #'   sentinel as missing.  When missing observations are detected for a
 #'   covariate, the generated model expression is wrapped in an
-#'   \code{ifelse()} guard so that the covariate contribution is set to the
-#'   population-typical value: \code{0} for continuous covariates (equivalent
-#'   to imputing the median, since \code{log(median/median) = 0}) or the mode
-#'   of the observed levels for categorical covariates.
+#'   \code{ifelse()} guard so that the covariate contribution corresponds to
+#'   the population-typical value (the observed median for continuous
+#'   covariates, the mode for categorical).  For continuous covariates the
+#'   fill is shape-aware: it is the shape expression evaluated at
+#'   \code{cov = median}, which is \code{0} for \code{"power"} and
+#'   \code{"lin"} (centered shapes), \code{log(median)} for \code{"log"},
+#'   and \code{median} itself for \code{"identity"}.  For categorical
+#'   covariates the indicator is set to the mode of the observed levels.
 #' @param data data frame containing all subjects and columns required by the
 #'   search (covariates, dose/observation records, etc.).  When \code{NULL}
 #'   (default), \code{nlme::getData(fit)} is used, which may omit covariate
@@ -1224,9 +1228,14 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
 #'   \item{has_missing}{logical -- whether any observations are missing}
 #'   \item{missing_check}{character -- the \code{ifelse} condition string,
 #'     e.g. \code{"is.na(wt)"} or \code{"is.na(wt) | wt == -99"}}
-#'   \item{missing_fill}{integer -- replacement value (0 for continuous;
-#'     0 or 1 for categorical based on whether the observed mode equals
-#'     the indicator level)}
+#'   \item{missing_fill}{integer placeholder (always \code{0L} for
+#'     continuous rows; \code{0} or \code{1} for categorical rows based on
+#'     whether the observed mode equals the indicator level).  For
+#'     continuous covariates the actual shape-aware fill literal is built
+#'     later in \code{.expandShapes()} via \code{.scmFillStr()}, because
+#'     the appropriate value depends on the shape (e.g. \code{log(median)}
+#'     for \code{"log"}, \code{median} for \code{"identity"}) and the
+#'     shape is not yet known at \code{.enrichPairs()} time.}
 #' }
 #'
 #' @param pairs data frame with at least \code{var} and \code{covar} columns
@@ -1320,8 +1329,13 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
   #   has_missing   - logical flag
   #   missing_check - condition string for the ifelse() (e.g. "is.na(wt)")
   #   missing_fill  - replacement value when condition is TRUE:
-  #                     continuous  -> 0 (imputing to median -> log(m/m) = 0)
-  #                     categorical -> 1 if mode == level, else 0
+  #                     continuous  -> placeholder 0L; the actual shape-aware
+  #                                    fill literal (e.g. log(median) for
+  #                                    the log shape, median for identity)
+  #                                    is built later by .scmFillStr() in
+  #                                    .expandShapes() once the shape is known.
+  #                     categorical -> 1 if mode == level, else 0 (used as-is
+  #                                    by .expandShapes()).
   pairs$has_missing <- FALSE
   pairs$missing_fill <- 0L
   pairs$missing_check <- NA_character_
@@ -1482,11 +1496,24 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
           customShapes = customShapes
         )
         if (has_miss && !is.na(miss_check)) {
+          # Shape-aware population-typical fill: imputing the median means
+          # evaluating the shape expression at cov = center.  For built-in
+          # shapes this gives 0 for power/lin (centered), log(center) for
+          # log, and center itself for identity.  Using 0 unconditionally
+          # (as the earlier implementation did) would correspond to
+          # imputing cov = 1 for the log shape and cov = 0 for identity --
+          # neither is the population median.
+          fill_str <- .scmFillStr(
+            shape = sh,
+            center = center,
+            level = level,
+            customShapes = customShapes
+          )
           expr <- paste0(
             "ifelse(",
             miss_check,
             ", ",
-            miss_fill,
+            fill_str,
             ", ",
             expr,
             ")"

@@ -150,7 +150,7 @@ reference a covariate column — otherwise `nlme::getData(fit)` may drop it.
 
 ### 4. Covariate shapes
 
-`runSCM()` supports four built-in shapes for continuous covariates.  All use the
+`runSCM()` supports four built-in shapes for continuous covariates. `"power"` and `"lin"` use the
 **observed median** as the centering value, computed automatically from the data.
 
 | Shape | Expression in model body | Interpretation |
@@ -337,7 +337,10 @@ When a covariate has missing observations, set `missingToken` to the sentinel us
 the data (e.g. `-99` or `"."`) in addition to `NA`.  `runSCM()` wraps the covariate
 expression in an `ifelse()` guard that imputes the population-typical value:
 
-* **Continuous**: imputes the median (log(median/median) = 0 for power shape; 0 for linear).
+* **Continuous**: imputes the median by evaluating the shape expression at
+  `cov = median(cov)`.  This gives `0` for `"power"` (`log(median(cov)/median(cov)) = 0`) and
+  `"lin"` (`median(cov)-median(cov)= 0`), `log(median(cov))` for `"log"`, and the `median(cov)` itself
+  for `"identity"`. 
 * **Categorical**: imputes the mode (most frequent level).
 
 ---
