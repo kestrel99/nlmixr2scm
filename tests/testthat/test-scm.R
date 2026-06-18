@@ -457,6 +457,73 @@ test_that(".expandShapes: log shape returns log(col)", {
   expect_match(res$covExpr[1], "^log\\(wt\\)$")
 })
 
+# =============================================================================
+# .expandShapes: missing-value fill is shape-aware (imputes median, not 0)
+# =============================================================================
+# Regression test: earlier versions used `missing_fill = 0L` for every
+# continuous shape, which silently mis-imputed `cov = 1` for `"log"` and
+# `cov = 0` for `"identity"` instead of the median.  The fix routes the fill
+# through `.scmFillStr()` which evaluates the shape expression at the
+# centering value (median).
+
+test_that(".expandShapes: missing-value fill is shape-aware (imputes median)", {
+  d <- data.frame(
+    ID = 1:5,
+    wt = c(70, 75, NA, 80, 65),
+    stringsAsFactors = FALSE
+  )
+  med <- median(d$wt, na.rm = TRUE) # 72.5
+  pairs <- data.frame(var = "cl", covar = "wt", stringsAsFactors = FALSE)
+  enriched <- .cur$.enrichPairs(pairs, d)
+  expect_true(enriched$has_missing[1])
+
+  # power: fill = log(m/m) = 0 (also matches the previous behaviour)
+  ep_pow <- .cur$.expandShapes(enriched, shapes = "power")
+  expect_match(
+    ep_pow$covExpr[1],
+    "ifelse(is.na(wt), 0, log(wt/",
+    fixed = TRUE
+  )
+
+  # lin: fill = m - m = 0
+  ep_lin <- .cur$.expandShapes(enriched, shapes = "lin")
+  expect_match(
+    ep_lin$covExpr[1],
+    "ifelse(is.na(wt), 0, (wt - ",
+    fixed = TRUE
+  )
+
+  # log: fill = log(median), NOT 0 (0 would imply cov = 1)
+  ep_log <- .cur$.expandShapes(enriched, shapes = "log")
+  expect_match(
+    ep_log$covExpr[1],
+    paste0("ifelse(is.na(wt), ", sprintf("%.15g", log(med)), ", log(wt))"),
+    fixed = TRUE
+  )
+  expect_false(
+    grepl(
+      "ifelse(is.na(wt), 0, log(wt))",
+      ep_log$covExpr[1],
+      fixed = TRUE
+    )
+  )
+
+  # identity: fill = median, NOT 0
+  ep_id <- .cur$.expandShapes(enriched, shapes = "identity")
+  expect_match(
+    ep_id$covExpr[1],
+    paste0("ifelse(is.na(wt), ", sprintf("%.15g", med), ", wt)"),
+    fixed = TRUE
+  )
+  expect_false(
+    grepl(
+      "ifelse(is.na(wt), 0, wt)",
+      ep_id$covExpr[1],
+      fixed = TRUE
+    )
+  )
+})
+
 test_that(".expandShapes: cat shape uses indicator column name", {
   d <- data.frame(
     ID = 1:4,

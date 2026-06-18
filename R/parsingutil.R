@@ -185,6 +185,66 @@
   fn(col = col, center = center, level = level)
 }
 
+#' Population-typical missing-value fill string for a covariate shape
+#'
+#' Returns the model-body literal that the covariate expression takes when
+#' the covariate equals its centering value (the observed median for the
+#' built-in continuous shapes).  This is used by \code{.expandShapes()} to
+#' wrap continuous covariate expressions in an \code{ifelse()} guard so that
+#' missing observations contribute the population-typical effect (i.e. as if
+#' the subject had \code{cov = median}).
+#'
+#' Built-in shapes are hard-coded for clarity and numerical efficiency:
+#' \describe{
+#'   \item{power}{   \code{"0"}  (\code{log(m/m) = 0})}
+#'   \item{lin}{     \code{"0"}  (\code{m - m   = 0})}
+#'   \item{log}{     numeric literal for \code{log(m)}}
+#'   \item{identity}{numeric literal for \code{m}}
+#' }
+#' Custom shapes fall back to invoking the shape function with \code{col} set
+#' to the formatted center value (so the returned string is the shape
+#' expression evaluated symbolically at \code{cov = center}).
+#'
+#' Using \code{"0"} unconditionally (as a previous implementation did) is
+#' only correct for the centered shapes (\code{power}, \code{lin}); for
+#' \code{log} it would correspond to imputing \code{cov = 1} (since
+#' \code{log(1) = 0}) and for \code{identity} it would impute \code{cov = 0}
+#' -- neither of which is the population median.
+#'
+#' @param shape character; shape name (one of the built-ins or a custom key)
+#' @param center numeric or \code{NULL}; centering value (covariate median)
+#' @param level character or \code{NULL}; passed through to custom shape functions
+#' @param customShapes optional named list of additional shape builder functions
+#' @return character string suitable for embedding in an \code{ifelse()} body
+#' @noRd
+.scmFillStr <- function(shape, center, level = NULL, customShapes = NULL) {
+  if (is.null(center) || !is.finite(center)) {
+    return("0")
+  }
+  switch(
+    shape,
+    power = "0",
+    lin = "0",
+    log = if (center > 0) sprintf("%.15g", log(center)) else "0",
+    identity = sprintf("%.15g", center),
+    {
+      shape_fn <- if (!is.null(customShapes) && shape %in% names(customShapes)) {
+        customShapes[[shape]]
+      } else {
+        .SCM_SHAPES[[shape]]
+      }
+      if (is.null(shape_fn)) {
+        return("0")
+      }
+      shape_fn(
+        col = sprintf("%.15g", center),
+        center = center,
+        level = level
+      )
+    }
+  )
+}
+
 #' Rebuild a UI by applying a set of covariate relationships to a clean base UI
 #'
 #' Starting from \code{base_ui} (always the original model without any
