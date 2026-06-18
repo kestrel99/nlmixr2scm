@@ -265,6 +265,37 @@ test_that("Extract column corresponding to  Individual", {
   expect_equal(funstring1, funstring2)
 })
 
+test_that(".idColumn() finds id regardless of column position", {
+  # Regression test for Bug A:
+  #   uidCol <- colNames[which("id" %in% colNamesLower)]
+  # `"id" %in% colNamesLower` is a single TRUE/FALSE, so `which()` returns 1
+  # (or integer(0)) instead of the *index* of the matching column. The function
+  # therefore returned the first column whenever an id-like column existed but
+  # was not in position 1.
+
+  # id IS the first column -- passes even with the buggy code (by accident)
+  d_first <- data.frame(ID = 1:3, TIME = 0:2, WT = c(70, 80, 90))
+  expect_equal(.cur$.idColumn(d_first), "ID")
+
+  # id is NOT the first column -- buggy code returns "TIME"
+  d_second <- data.frame(TIME = 0:2, ID = 1:3, WT = c(70, 80, 90))
+  expect_equal(.cur$.idColumn(d_second), "ID")
+
+  # id is in the middle, lowercase -- buggy code returns "TIME"
+  d_middle <- data.frame(TIME = 0:2, AMT = c(100, 0, 0),
+                         id = 1:3, WT = c(70, 80, 90))
+  expect_equal(.cur$.idColumn(d_middle), "id")
+
+  # mixed case is preserved
+  d_mixed <- data.frame(WT = c(70, 80, 90), Id = 1:3)
+  expect_equal(.cur$.idColumn(d_mixed), "Id")
+})
+
+test_that(".idColumn() falls back to 'ID' when no id-like column exists", {
+  d <- data.frame(TIME = 0:2, WT = c(70, 80, 90))
+  expect_equal(.cur$.idColumn(d), "ID")
+})
+
 
 # ==== Build ui from the covariate
 
