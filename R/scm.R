@@ -2419,7 +2419,17 @@ backwardSearch <- function(
 
     # Union includedRelations into the candidate pairs so .pairsInModel()
     # picks them up.  De-duplicate on (covar, var) key.
-    pair_keys <- paste0(pairs$covar, "_", pairs$var)
+    #
+    # NOTE: `pairs$covar` and `includedRelations$covar` have BOTH already
+    # been rewritten by .expandShapes() / categorical expansion to include
+    # the shape / level suffix (e.g. "BW_power", "BW_log", "SEX_1").
+    # `inc_keys` is built with the "cov_" prefix to compare against
+    # `cur_thetas` (which are theta names like "cov_BW_power_cl").  The
+    # `pair_keys` MUST therefore also carry the "cov_" prefix or no row
+    # will ever be considered a duplicate, and every includedRelation
+    # gets appended on top of the matching pair already in `pairs`,
+    # silently doubling every candidate at every backward step.
+    pair_keys <- paste0("cov_", pairs$covar, "_", pairs$var)
     new_rows <- includedRelations[!inc_keys %in% pair_keys, , drop = FALSE]
     if (nrow(new_rows) > 0) {
       pairs <- rbind(pairs, new_rows)
