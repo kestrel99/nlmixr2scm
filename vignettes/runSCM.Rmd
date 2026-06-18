@@ -348,15 +348,36 @@ expression in an `ifelse()` guard that imputes the population-typical value:
 ## Output files
 
 When `saveModels = TRUE` (the default), `runSCM()` writes the following files to the
-output directory (auto-named `<fitName>_scm_<N>` in the working directory):
+output directory (auto-named `<fitName>_scm_<N>` in the working directory).
+
+Two CSV summaries and one log file are written at the end of the search:
 
 | File | Contents |
 |---|---|
 | `scm_step_summary.csv` | Best candidate per step (one row per step) |
-| `scm_all_candidates.csv` | Every model tested across all steps |
+| `scm_all_candidates.csv` | Every candidate model tested, across all steps and both phases |
 | `scm_log.txt` | Human-readable run log with header metadata |
-| `fwd_step{N}_<rel>.rds` | Fitted model for each forward candidate |
-| `bck_step{N}_<rel>.rds` | Fitted model for each backward candidate |
+
+Three `.rds` files are written **per accepted step** (not per candidate). The
+`<key>` segment is `<covar>_<var>` for the covariate that was added (forward)
+or removed (backward) at that step:
+
+| File | Contents |
+|---|---|
+| `forward_step_<N>_fit_<key>.rds` | Fit object for the model accepted at forward step N |
+| `forward_step_<N>_table_<key>.rds` | One-row data frame for the accepted best candidate |
+| `forward_step_<N>_completetable_<key>.rds` | All candidates tested across forward steps 1..N (cumulative) |
+| `backward_step_<N>_fit_<key>.rds` | Fit object after the covariate is removed at backward step N |
+| `backward_step_<N>_table_<key>.rds` | One-row data frame for the removed covariate |
+| `backward_step_<N>_completetable_<key>.rds` | All candidates tested across backward steps 1..N (cumulative) |
+
+Only the accepted (best-at-step) candidate is persisted to `.rds`; per-candidate
+fit results are not written individually but are available in
+`scm_all_candidates.csv` and in the cumulative `_completetable_` snapshots.
+
+> The `_table_` and `_completetable_` `.rds` files duplicate information in the
+> CSVs but at full numeric precision and as per-step checkpoints (useful for
+> resume/inspection mid-run). Routine post-hoc analysis can rely on the CSVs alone.
 
 Set `saveModels = FALSE` to run without writing any files, for example when
 exploring the search space in a scratch session.
