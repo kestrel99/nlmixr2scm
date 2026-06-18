@@ -1981,9 +1981,14 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
       function(f) paste0(f$.pair, ": ", f$.reason),
       character(1)
     )
+    
+    # Escape any curly braces in the reason strings before passing to cli,
+    # because error messages from nlmixr2/cli themselves may contain `{`/`}`
+    # which cli would try to parse as glue expressions.
+    fail_msgs_safe <- gsub("\\{", "{{", gsub("\\}", "}}", fail_msgs))
     cli::cli_warn(c(
       "!" = "{length(failures)} candidate fit(s) failed at step {stepIdx}:",
-      setNames(fail_msgs, rep("x", length(fail_msgs)))
+      setNames(fail_msgs_safe, rep("x", length(fail_msgs_safe)))
     ))
   }
 
