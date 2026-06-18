@@ -232,7 +232,7 @@ Key columns:
 | `covar` | Covariate name |
 | `var` | PK parameter |
 | `shape` | Functional shape tested |
-| `deltObjf` | ΔOFV (positive = improvement in forward; positive = deterioration in backward) |
+| `deltObjf` | ΔOFV (candidate − reference: negative = improvement in forward, positive = deterioration in backward) |
 | `pchisqr` | p-value from chi-squared test (1 df) |
 | `bsvReduction` | Reduction in BSV for `var` (%) |
 | `covarEffect` | Estimated effect magnitude at the covariate extremes |

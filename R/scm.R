@@ -123,9 +123,9 @@
 #' @param maxRetries integer; maximum number of retry attempts per candidate
 #'   when the OFV is deemed unrealistic.  Default \code{3L}.  Set to \code{0}
 #'   to disable the retry mechanism entirely.
-#' @param maxDeltaOFV numeric; absolute ceiling on OFV improvement.  A
-#'   candidate whose dOFV exceeds this value is flagged as unrealistic and
-#'   retried.  Default \code{Inf} (disabled; only criterion 1 and 2 apply).
+#' @param maxDeltaOFV numeric; absolute ceiling on plausible OFV change.  A
+#'   candidate whose \code{|dOFV|} exceeds this value is flagged as unrealistic
+#'   and retried.  Default \code{Inf} (disabled; only criterion 1 and 2 apply).
 #' @param retryPerturbSD numeric; standard deviation of the log-normal
 #'   perturbation applied to \code{cov_init} on odd-numbered retries.  Default
 #'   \code{0.5}.
@@ -608,7 +608,7 @@ runSCM <- function(
   }
 
   .ref_objf <- function(st_vec, objf_vec, delta_vec) {
-    ifelse(st_vec == "forward", objf_vec + delta_vec, objf_vec - delta_vec)
+    objf_vec - delta_vec
   }
 
   # -- Step summary (best per step) ------------------------------------------
@@ -1657,9 +1657,9 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
 #'
 #' @param x_objf           OFV of the candidate fit
 #' @param ref_objf         OFV of the reference (parent) fit
-#' @param dObjf            OFV improvement: ref - x for forward, x - ref for backward
+#' @param dObjf            OFV change: candidate minus reference (negative = improvement)
 #' @param pchisqr          chi-squared p-value for the improvement
-#' @param maxDeltaOFV      user-specified ceiling on plausible OFV improvement
+#' @param maxDeltaOFV      user-specified ceiling on plausible absolute OFV change
 #' @param effective_tolerance margin added to ref_objf before criterion 1 fires
 #' @return logical scalar
 #' @noRd
@@ -1667,7 +1667,7 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
                                maxDeltaOFV, effective_tolerance) {
   x_objf > ref_objf + effective_tolerance ||
     pchisqr < .Machine$double.eps ||
-    dObjf > maxDeltaOFV
+    abs(dObjf) > maxDeltaOFV
 }
 
 #' Fit all candidate models for one SCM step
@@ -1860,7 +1860,7 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
           if (attempt < maxRetries) next else return(x)
         }
 
-        dObjf <- if (add) fit$objf - x$objf else x$objf - fit$objf
+        dObjf <- x$objf - fit$objf
         if (is.na(dObjf)) {
           if (attempt < maxRetries) {
             next
@@ -1878,7 +1878,11 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
         } else {
           length(fit$finalUiEnv$ini$est) - length(x$finalUiEnv$ini$est)
         }
-        pchisqr <- if (dObjf > 0) 1 - stats::pchisq(dObjf, df = dof) else 1
+        # The LRT is one-sided: only the direction indicating a meaningful change
+        # (OFV drop for forward, OFV increase for backward) yields a test
+        # statistic.  A change in the wrong direction gets p = 1.
+        chisq_stat <- if (add) -dObjf else dObjf
+        pchisqr <- if (chisq_stat > 0) 1 - stats::pchisq(chisq_stat, df = dof) else 1
 
         # For backward elimination the unrealistic-OFV criteria are not applied:
         # removing a significant covariate legitimately produces a large OFV
@@ -1906,7 +1910,7 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
         } else if (pchisqr < .Machine$double.eps) {
           paste0("p-value underflow (dOFV = ", round(dObjf, 3), ")")
         } else {
-          paste0("dOFV (", round(dObjf, 3), ") exceeds maxDeltaOFV (", maxDeltaOFV, ")")
+          paste0("|dOFV| (", round(abs(dObjf), 3), ") exceeds maxDeltaOFV (", maxDeltaOFV, ")")
         }
 
         if (attempt < maxRetries) {

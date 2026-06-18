@@ -1,4 +1,10 @@
+# nlmixr2scm 0.3
+
+* Changed `dOFV` sign convention: `dOFV` is now reported as `candidate OFV − reference OFV` uniformly for both forward and backward steps. A negative value indicates an OFV improvement (forward addition), a positive value indicates an OFV increase (backward removal). Previously the sign was flipped so that `dOFV` was always positive for "meaningful" changes, which was internally convenient but inconsistent with the standard pharmacometric interpretation. The `maxDeltaOFV` retry criterion now compares against `|dOFV|`.
+
 # nlmixr2scm 0.2
+
+* Yuan Liu added as package co-author.
 
 * Auto-scaled default theta bounds for `lin`, `log`, and `identity` covariate shapes. Previously the shape-agnostic defaults of `(-5, 5)` could produce numerically catastrophic parameter spaces for physiologically-scaled covariates (e.g. weight in kg), causing both diverged optimizations and spurious minima. Bounds are now scaled by `1/|center|` for `lin` and `identity`, and by `1/|log(center)|` for `log`, giving results comparable to the dimensionless `power` shape.
 
