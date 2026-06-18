@@ -665,7 +665,7 @@ scmAddOrRemoveCovariate <- function(
   colNames <- colnames(data)
   colNamesLower <- tolower(colNames)
   if ("id" %in% colNamesLower) {
-    uidCol <- colNames[which("id" %in% colNamesLower)]
+    uidCol <- colNames[match("id", colNamesLower)]
   } else {
     uidCol <- "ID"
   }

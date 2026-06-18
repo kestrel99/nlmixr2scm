@@ -4,6 +4,10 @@
 
 * New retry mechanism for unrealistic OFV values in `runSCM()`. Six new arguments control the behaviour: `maxRetries` (default `3L`), `maxDeltaOFV` (default `Inf`), `retryPerturbSD` (default `0.5`), `retrySmallInit` (default `0.01`), `retryOFVTolerance` (default `NULL`, auto-detected), and `retryFailOnExhaustion` (default `FALSE`). When a candidate fit produces an OFV that is implausibly high or low, the fit is retried with perturbed or reduced initial estimates. Stochastic estimators (SAEM) get a 10-unit tolerance margin automatically to avoid spurious retries due to Monte Carlo noise.
 
+* Fixed `.idColumn()` returning the wrong column when `id`/`ID` was not the first column of the dataset. `which("id" %in% colNamesLower)` always evaluated to `1` (or `integer(0)`) regardless of the matching column's position, causing `.enrichPairs()` to compute per-subject covariate medians from the wrong column. Replaced with `match("id", colNamesLower)`. Datasets where `id` happened to be the first column (e.g. `nlmixr2data::warfarin`) were unaffected.
+
+* Fixed a bug in `runSCM(searchType = "backward", includedRelations = ...)` where every relation in `includedRelations` was silently appended to the candidate `pairs` table at every backward step, even when already present. The dedupe key for `pairs` lacked the `cov_` prefix carried by theta names, so no row was ever recognised as a duplicate; backward steps iterated over twice the intended candidates and wall-clock time roughly doubled. Both keys are now prefixed with `cov_`.
+
 # nlmixr2scm 0.1
 
 * `runSCM()` provides a standalone home for nlmixr2 stepwise covariate modeling, including SCM model-building helpers, categorical covariate expansion, resume support, and the migrated SCM vignette/tests.
