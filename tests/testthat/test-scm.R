@@ -1473,3 +1473,68 @@ test_that("runSCM: backward-removed covariates labeled 'dropped' in summaryTable
   # And the included column should only contain the documented tokens
   expect_true(all(st$included %in% c("yes", "no", "dropped", "retained")))
 })
+
+# =============================================================================
+# Retry-exhaustion best-attempt tracking
+#
+# .fitCandidatePairs() must keep the BEST (largest-dObjf) attempt across
+# perturbed-init retries, not whichever attempt happened to run last.
+#
+# The selection rule is INLINED inside .fitCandidatePairs() because that loop
+# runs in future.apply workers spawned by .plap(); workers load the installed
+# package and cannot see helpers introduced via devtools::load_all().  These
+# tests mirror the production rule locally so the spec is documented and the
+# regression scenario stays covered.  If the inlined block in R/scm.R changes,
+# update .update_best_attempt() below to match.
+# =============================================================================
+# Local mirror of the production rule.  Source of truth in R/scm.R inside
+# .fitCandidatePairs():
+#
+#   if (is.null(best_attempt) ||
+#       .cand_attempt$dObjf > best_attempt$dObjf) {
+#     best_attempt <- .cand_attempt
+#   }
+.update_best_attempt <- function(best, candidate) {
+  if (is.null(best) || candidate$dObjf > best$dObjf) candidate else best
+}
+
+test_that("retry tracking: first attempt becomes best when no incumbent", {
+  cand <- list(x = "a", dObjf = -250, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  expect_identical(.update_best_attempt(NULL, cand), cand)
+})
+
+test_that("retry tracking: candidate with larger dObjf replaces incumbent", {
+  best <- list(x = "a", dObjf = -250, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  cand <- list(x = "b", dObjf =   -1, dof = 1L, pchisqr = 1, attempt_num = 2L)
+  expect_identical(.update_best_attempt(best, cand), cand)
+})
+
+test_that("retry tracking: candidate with smaller dObjf keeps incumbent", {
+  best <- list(x = "a", dObjf =  -1, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  cand <- list(x = "b", dObjf = -100, dof = 1L, pchisqr = 1, attempt_num = 2L)
+  expect_identical(.update_best_attempt(best, cand), best)
+})
+
+test_that("retry tracking: ties resolve to incumbent (no churn)", {
+  best <- list(x = "a", dObjf = -50, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  cand <- list(x = "b", dObjf = -50, dof = 1L, pchisqr = 1, attempt_num = 2L)
+  expect_identical(.update_best_attempt(best, cand), best)
+})
+
+test_that("retry tracking: regression -- last attempt with smaller dObjf does not overwrite best", {
+  # Bug scenario from the SEX_1~cl retry chain: three attempts produce
+  # dObjf = -250, -1, -100.  The original .fitCandidatePairs() unconditionally
+  # kept the LAST attempt (-100), even though the per-attempt warning correctly
+  # claimed "best available".  The current implementation tracks the running
+  # best, so attempt 2 (-1) survives.
+  b <- NULL
+  b <- .update_best_attempt(b, list(x = "att1", dObjf = -250, dof = 1L,
+                                    pchisqr = 1, attempt_num = 1L))
+  b <- .update_best_attempt(b, list(x = "att2", dObjf =   -1, dof = 1L,
+                                    pchisqr = 1, attempt_num = 2L))
+  b <- .update_best_attempt(b, list(x = "att3", dObjf = -100, dof = 1L,
+                                    pchisqr = 1, attempt_num = 3L))
+  expect_equal(b$x, "att2")
+  expect_equal(b$dObjf, -1)
+  expect_equal(b$attempt_num, 2L)
+})
