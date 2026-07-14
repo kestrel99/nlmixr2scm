@@ -867,6 +867,65 @@ test_that(".rebuildUiFromPairs: two covariates on different parameters both adde
 })
 
 # =============================================================================
+# .freezeUiForProfile  (1-D Brent warm-start: frozen base)
+# =============================================================================
+
+.make_cov_ui <- function() {
+  ui <- nlmixr2est::nlmixr(.one_cmt_fun)
+  pairs <- data.frame(
+    var = "cl", covar = "wt_power", covExpr = "log(wt/70)",
+    init = 0.5, lower = -2, upper = 2, stringsAsFactors = FALSE
+  )
+  .cur$.rebuildUiFromPairs(ui, pairs)
+}
+
+test_that(".freezeUiForProfile: leaves exactly one theta free", {
+  ui <- .make_cov_ui()
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  ini <- frozen$iniDf
+  is_theta <- !is.na(ini$ntheta)
+  free <- ini$name[is_theta & !ini$fix]
+  expect_equal(free, "cov_wt_power_cl")
+})
+
+test_that(".freezeUiForProfile: fixes all structural + residual thetas", {
+  ui <- .make_cov_ui()
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  ini <- frozen$iniDf
+  is_theta <- !is.na(ini$ntheta)
+  fixed <- ini$name[is_theta & ini$fix]
+  # tka, tcl, tv, add.sd all fixed; the new cov theta is not
+  expect_true(all(c("tka", "tcl", "tv", "add.sd") %in% fixed))
+  expect_false("cov_wt_power_cl" %in% fixed)
+})
+
+test_that(".freezeUiForProfile: preserves parent theta estimates", {
+  ui <- .make_cov_ui()
+  before <- ui$iniDf
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  after <- frozen$iniDf
+  for (nm in c("tka", "tcl", "tv")) {
+    expect_equal(
+      after$est[after$name == nm],
+      before$est[before$name == nm]
+    )
+  }
+})
+
+test_that(".freezeUiForProfile: zeroes between-subject variability (omega)", {
+  ui <- .make_cov_ui()
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  ini <- frozen$iniDf
+  # no free eta rows should remain after zeroRe(which = "omega")
+  eta_rows <- ini[!is.na(ini$neta1), , drop = FALSE]
+  if (nrow(eta_rows) > 0) {
+    expect_true(all(eta_rows$fix | eta_rows$est == 0))
+  } else {
+    expect_equal(nrow(eta_rows), 0L)
+  }
+})
+
+# =============================================================================
 # Integration tests — require nlmixr2data, slow fitting
 # =============================================================================
 
