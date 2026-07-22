@@ -121,13 +121,30 @@
 #'   interactive, the user is prompted to confirm before the search begins.
 #'   Set to \code{FALSE} to skip the prompt (useful in scripts or tests).
 #' @param profileInit logical; if \code{TRUE}, each forward candidate's new
-#'   covariate coefficient is warm-started with a cheap 1-D Brent profile on a
-#'   frozen base (all structural thetas fixed at their parent estimates and
-#'   between-subject variability zeroed) before the real estimator runs.  This
-#'   supplies gradient optimisers (\code{nlminb}, \code{lbfgsb3c}) with a
-#'   nonzero, gradient-informative starting value so they do not stall at the
-#'   flat zero-effect point.  bobyqa is never involved; the profiled value is
-#'   handed back to the fit's own estimator.  Default \code{FALSE}.
+#'   covariate coefficient is warm-started with a cheap 1-D FOCEi profile on a
+#'   frozen base (all structural thetas fixed at their parent estimates and the
+#'   between-subject variability FIXED -- not zeroed -- at its parent values)
+#'   before the real estimator runs.  Keeping the random effects intact matters:
+#'   profiling a covariate on a fixed-effect-only model is misspecified and can
+#'   return the wrong sign.  This supplies gradient optimisers (\code{nlminb},
+#'   \code{lbfgsb3c}) with a nonzero, gradient-informative starting value so
+#'   they do not stall at the flat zero-effect point.  bobyqa is never involved
+#'   in the caller; the profiled value is handed back to the fit's own
+#'   estimator.  Default \code{FALSE}.
+#' @param profileInitOnStall logical; if \code{TRUE} (default), a forward
+#'   candidate whose ordinary fit \emph{stalls} -- i.e. the nested model's OFV
+#'   improvement over its parent is \code{<= stallTol} (a nested model can never
+#'   be genuinely worse than its parent at a true optimum, so this signals the
+#'   outer optimiser never left the covariate init) -- triggers a one-shot
+#'   \code{.profileCovInit()} frozen 1-D profile.  The profiled coefficient is
+#'   then used as the init for a rescue refit.  Unlike \code{profileInit}, this
+#'   fires only when a stall is detected, so healthy candidates (e.g. analytic
+#'   \code{linCmt()} fits) pay no extra cost.  It is the fix for ODE covariate
+#'   candidates that stall at their init under solver-noise-flattened outer
+#'   objectives.  Default \code{TRUE}.
+#' @param stallTol numeric; OFV-improvement threshold below which a forward
+#'   candidate is considered stalled and eligible for the profile rescue.
+#'   Default \code{0} (any nested model no better than its parent).
 #' @param maxRetries integer; maximum number of retry attempts per candidate
 #'   when the OFV is deemed unrealistic.  Default \code{3L}.  Set to \code{0}
 #'   to disable the retry mechanism entirely.
@@ -212,6 +229,8 @@ runSCM <- function(
   workers = NULL,
   confirm = TRUE,
   profileInit = FALSE,
+  profileInitOnStall = TRUE,
+  stallTol = 0,
   maxRetries = 3L,
   maxDeltaOFV = Inf,
   retryPerturbSD = 0.5,
@@ -459,6 +478,8 @@ runSCM <- function(
         control = control,
         print = print,
         profileInit = profileInit,
+        profileInitOnStall = profileInitOnStall,
+        stallTol = stallTol,
         maxRetries = maxRetries,
         maxDeltaOFV = maxDeltaOFV,
         retryPerturbSD = retryPerturbSD,
@@ -515,6 +536,8 @@ runSCM <- function(
         control = control,
         print = print,
         profileInit = profileInit,
+        profileInitOnStall = profileInitOnStall,
+        stallTol = stallTol,
         maxRetries = maxRetries,
         maxDeltaOFV = maxDeltaOFV,
         retryPerturbSD = retryPerturbSD,
@@ -1802,6 +1825,8 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
   control = NULL,
   print = 100,
   profileInit = FALSE,
+  profileInitOnStall = TRUE,
+  stallTol = 0,
   maxRetries = 3L,
   maxDeltaOFV = Inf,
   retryPerturbSD = 0.5,
@@ -2081,6 +2106,82 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
       dof     <- loop_result$dof
       pchisqr <- loop_result$pchisqr
 
+      # -- Profile-on-stall rescue (forward path only) ----------------------
+      # Independent of the retry budget: runs AFTER the retry loop so it fires
+      # even when maxRetries = 0 (the fast benchmark setting).  A forward
+      # candidate whose accepted fit still stalled -- dObjf <= stallTol, i.e.
+      # the nested model is no better than its parent, which is impossible at a
+      # true optimum -- means the outer optimiser never moved the covariate off
+      # its init.  We run ONE frozen 1-D .profileCovInit() (all other thetas
+      # fixed, BSV fixed-but-present) to obtain a basin-correct coefficient,
+      # then refit the full candidate from that init.  The rescue result is
+      # kept ONLY if it strictly improves dObjf, so it can never make a
+      # candidate worse.  Healthy candidates (dObjf > stallTol, e.g. analytic
+      # linCmt fits) skip this entirely and pay no cost.
+      if (add && isTRUE(profileInitOnStall) &&
+          is.finite(dObjf) && dObjf <= stallTol) {
+        prof_val <- tryCatch(
+          .profileCovInit(
+            base_ui   = base_ui,
+            ctx_df    = ctx_df,
+            nam_var   = nam_var,
+            nam_covar = nam_covar,
+            cov_expr  = cov_expr,
+            cov_init  = orig_cov_init,
+            cov_lower = cov_lower,
+            cov_upper = cov_upper,
+            covNames  = covNames,
+            data      = data
+          ),
+          error = function(e) NA_real_
+        )
+        if (is.finite(prof_val)) {
+          cand_df_p <- data.frame(
+            var     = nam_var,
+            covar   = nam_covar,
+            covExpr = if (!is.null(cov_expr)) cov_expr else nam_covar,
+            init    = prof_val,
+            lower   = cov_lower,
+            upper   = cov_upper,
+            stringsAsFactors = FALSE
+          )
+          all_pairs_p <- if (!is.null(ctx_df)) rbind(ctx_df, cand_df_p) else cand_df_p
+          x_p <- tryCatch(
+            {
+              ui_p <- .rebuildUiFromPairs(base_ui, all_pairs_p)
+              suppressWarnings(nlmixr2est::nlmixr2(
+                ui_p, data, fit$est, control = cand_control
+              ))
+            },
+            error = function(e) NULL
+          )
+          if (!is.null(x_p) && !isTRUE(x_p$.failed) &&
+              !is.null(x_p$objf) && is.finite(x_p$objf)) {
+            dObjf_p <- fit$objf - x_p$objf
+            if (is.finite(dObjf_p) && dObjf_p > dObjf) {
+              dof_p <- length(x_p$finalUiEnv$ini$est) -
+                length(fit$finalUiEnv$ini$est)
+              pchisqr_p <- if (dObjf_p > 0) {
+                1 - stats::pchisq(dObjf_p, df = dof_p)
+              } else {
+                1
+              }
+              cli::cli_inform(c(
+                "v" = paste0(
+                  "{nam_covar} ~ {nam_var}: profile-on-stall rescue ",
+                  "dOFV ", round(dObjf, 3), " -> ", round(dObjf_p, 3),
+                  " (profile init ", round(prof_val, 4), ")."
+                )
+              ))
+              x       <- x_p
+              dObjf   <- dObjf_p
+              dof     <- dof_p
+              pchisqr <- pchisqr_p
+            }
+          }
+        }
+      }
+
       covarEffect <- if (add) {
         x$parFixedDf[covNames, "Estimate"]
       } else {
@@ -2199,6 +2300,8 @@ forwardSearch <- function(
   control = NULL,
   print = 100,
   profileInit = FALSE,
+  profileInitOnStall = TRUE,
+  stallTol = 0,
   maxRetries = 3L,
   maxDeltaOFV = Inf,
   retryPerturbSD = 0.5,
@@ -2304,6 +2407,8 @@ forwardSearch <- function(
       control = control,
       print = print,
       profileInit = profileInit,
+      profileInitOnStall = profileInitOnStall,
+      stallTol = stallTol,
       maxRetries = maxRetries,
       maxDeltaOFV = maxDeltaOFV,
       retryPerturbSD = retryPerturbSD,
