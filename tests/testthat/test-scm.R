@@ -753,9 +753,11 @@ test_that("scmAddCatCovariates: original categorical column removed from data", 
 })
 
 test_that("scmAddCatCovariates: most-frequent level (reference) has no indicator", {
+  # 'B' appears first but 'A' is most frequent, so first-appearing and modal
+  # rules disagree -- this fixture is what distinguishes them.
   d <- data.frame(
     ID = seq_len(10),
-    grp = c(rep("A", 7), rep("B", 2), rep("C", 1)),
+    grp = c("B", rep("A", 7), "B", "C"),
     stringsAsFactors = FALSE
   )
   res <- .cur$scmAddCatCovariates(
@@ -768,6 +770,205 @@ test_that("scmAddCatCovariates: most-frequent level (reference) has no indicator
   expect_false("grp_A" %in% names(new_data))
   expect_true("grp_B" %in% names(new_data))
   expect_true("grp_C" %in% names(new_data))
+})
+
+test_that("scmAddCatCovariates: factors use the modal level, not the first level", {
+  d <- data.frame(
+    ID = seq_len(10),
+    grp = factor(
+      c("B", rep("A", 7), "B", "C"),
+      levels = c("B", "A", "C")
+    )
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = character(0),
+    catcovarsVec = "grp"
+  )
+  new_data <- res[[1]]
+  # 'B' is the first factor level but 'A' is modal -- 'A' is the reference
+  expect_false("grp_A" %in% names(new_data))
+  expect_true("grp_B" %in% names(new_data))
+  expect_true("grp_C" %in% names(new_data))
+})
+
+test_that("scmAddCatCovariates: catCutoff lumps rare levels with the reference", {
+  d <- data.frame(
+    ID = seq_len(20),
+    grp = c(rep("A", 15), rep("B", 4), "C"),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = character(0),
+    catcovarsVec = "grp",
+    catCutoff = 0.1
+  )
+  new_data <- res[[1]]
+  # C is 5% of rows, below the 10% cutoff, so it is lumped with the reference
+  expect_true("grp_B" %in% names(new_data))
+  expect_false("grp_C" %in% names(new_data))
+})
+
+test_that("scmAddCatCovariates: NA rows give 0 indicators, not NA", {
+  d <- data.frame(
+    ID = seq_len(6),
+    grp = c("A", "A", "A", "B", "B", NA),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = character(0),
+    catcovarsVec = "grp"
+  )
+  new_data <- res[[1]]
+  expect_equal(new_data$grp_B, c(0L, 0L, 0L, 1L, 1L, 0L))
+  expect_false(anyNA(new_data$grp_B))
+})
+
+test_that("scmAddCatCovariates: errors on indicator name collision", {
+  d <- data.frame(
+    ID = seq_len(4),
+    grp = c("A", "A", "B", "B"),
+    grp_B = c(9L, 9L, 9L, 9L),
+    stringsAsFactors = FALSE
+  )
+  expect_error(
+    .cur$scmAddCatCovariates(
+      d,
+      covarsVec = character(0),
+      catcovarsVec = "grp"
+    ),
+    "already exist"
+  )
+})
+
+test_that("scmAddCatCovariates: a repeated column is expanded once, not an error", {
+  d <- data.frame(
+    ID = seq_len(4),
+    grp = c("A", "A", "B", "B"),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = character(0),
+    catcovarsVec = c("grp", "grp")
+  )
+  expect_equal(res[[2]], "grp_B")
+})
+
+test_that("scmAddCatCovariates: unused factor levels get no all-zero indicator", {
+  d <- data.frame(
+    ID = seq_len(4),
+    grp = factor(c("A", "A", "B", "B"), levels = c("A", "B", "D"))
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = character(0),
+    catcovarsVec = "grp"
+  )
+  expect_false("grp_D" %in% names(res[[1]]))
+})
+
+test_that("scmAddCatCovariates: default counts per subject, not per row", {
+  # 2 male subjects with 20 rows each, 5 female subjects with 2 rows each.
+  # Per subject F wins 5-2; per row M wins 40-10.  The default must count
+  # subjects, so F is the reference and only SEX_M is built.
+  d <- data.frame(
+    ID = c(rep(1, 20), rep(2, 20), rep(3:7, each = 2)),
+    SEX = c(rep("M", 40), rep("F", 10)),
+    stringsAsFactors = FALSE
+  )
+  expect_equal(
+    .cur$scmAddCatCovariates(d, character(0), "SEX")[[2]],
+    "SEX_M"
+  )
+  expect_equal(
+    .cur$scmAddCatCovariates(d, character(0), "SEX", freqBy = "observation")[[
+      2
+    ]],
+    "SEX_F"
+  )
+})
+
+test_that("scmAddCatCovariates: freqBy auto picks the rule per column", {
+  # SEX is constant within subject -> per subject; CMT varies -> per row
+  d <- data.frame(
+    ID = c(rep(1, 20), rep(2, 20), rep(3:7, each = 2)),
+    SEX = c(rep("M", 40), rep("F", 10)),
+    CMT = c(rep(c(1, 2), 25)),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    character(0),
+    c("SEX", "CMT"),
+    freqBy = "auto"
+  )
+  expect_true("SEX_M" %in% res[[2]])
+  expect_true(any(grepl("^CMT_", res[[2]])))
+})
+
+test_that("scmAddCatCovariates: covarsVec drops the expanded column", {
+  # 'SEX' is gone from the returned data, so it must not remain in covarsVec
+  d <- data.frame(
+    ID = 1:2,
+    WT = c(70, 80),
+    SEX = c("M", "F"),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = c("WT", "SEX"),
+    catcovarsVec = "SEX"
+  )
+  expect_false("SEX" %in% res[[2]])
+  expect_true(all(res[[2]] %in% names(res[[1]])))
+})
+
+test_that("scmAddCatCovariates: ties resolve deterministically", {
+  # A and B tie at 2 subjects each; the first name alphabetically is the
+  # reference, matching how .makeSCMData() breaks the same tie
+  d <- data.frame(
+    ID = 1:4,
+    grp = c("B", "B", "A", "A"),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(d, character(0), "grp")
+  expect_equal(res[[2]], "grp_B")
+})
+
+test_that("scmAddCatCovariates: all-NA column yields no indicators", {
+  d <- data.frame(
+    ID = 1:3,
+    grp = c(NA, NA, NA),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(d, character(0), "grp")
+  expect_length(res[[2]], 0)
+  expect_false("grp" %in% names(res[[1]]))
+})
+
+test_that("scmAddCatCovariates: single-level column yields no indicators", {
+  d <- data.frame(
+    ID = 1:3,
+    grp = c("A", "A", "A"),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(d, character(0), "grp")
+  expect_length(res[[2]], 0)
+})
+
+test_that("scmAddCatCovariates: errors when a categorical column is absent", {
+  d <- data.frame(ID = 1:4, grp = c("A", "A", "B", "B"))
+  expect_error(
+    .cur$scmAddCatCovariates(
+      d,
+      covarsVec = character(0),
+      catcovarsVec = "nope"
+    ),
+    "not found in data"
+  )
 })
 
 test_that("scmAddCatCovariates: indicator values are 0/1 integers", {
