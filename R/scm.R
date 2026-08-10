@@ -93,6 +93,14 @@
 #' @param customShapes named list of additional shape builder functions of the
 #'   form \code{function(col, center, level) -> character}.  These are merged
 #'   with the built-in shapes and take precedence over them.
+#' @param centers optional named numeric vector of fixed reference (centering)
+#'   values for continuous covariates, e.g. \code{c(BW = 70, CrCL = 95)}.  When
+#'   supplied, the named covariates are centered on these fixed values in every
+#'   fit instead of the per-dataset median.  This keeps the estimated covariate
+#'   coefficients (and the structural intercept) on the SAME reference across
+#'   datasets and matches a data-generating model that used the same fixed
+#'   references.  Names are matched against the raw covariate column; unmatched
+#'   names are ignored and covariates not named here fall back to the median.
 #' @param control optional control object (e.g. \code{saemControl()},
 #'   \code{foceiControl()}) passed to every \code{nlmixr2()} call during the
 #'   search.  When \code{NULL} (default), the control settings are inherited
@@ -189,6 +197,7 @@ runSCM <- function(
   pairsVec = NULL,
   shapes = "power",
   customShapes = NULL,
+  centers = NULL,
   inits = list(),
   missingToken = NA,
   includedRelations = NULL,
@@ -267,6 +276,7 @@ runSCM <- function(
     missingToken = missingToken,
     catLevels = cat_levels
   )
+  pairs <- .applyFixedCenters(pairs, centers)
   pairs <- .expandShapes(
     pairs,
     shapes = shapes,
@@ -285,6 +295,7 @@ runSCM <- function(
       missingToken = missingToken,
       catLevels = cat_levels
     )
+    included_pairs <- .applyFixedCenters(included_pairs, centers)
     included_pairs <- .expandShapes(
       included_pairs,
       shapes = shapes,
@@ -1028,14 +1039,18 @@ runSCM <- function(
 #' @param varsVec character vector of PK parameter names
 #' @param covarsVec character vector of covariate names
 #' @param pairsVec optional data frame with columns \code{var} and \code{covar},
-#'   or a list of \code{list(var=, covar=)} items
+#'   or a list of \code{list(var=, covar=)} items.  May additionally carry a
+#'   \code{center} column / element to fix the reference (centering) value for a
+#'   continuous covariate; when absent the per-dataset median is used by
+#'   \code{.enrichPairs()}.
 #' @return data frame with columns \code{var} and \code{covar}, one row per pair
 #' @noRd
 buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
   if (!is.null(pairsVec)) {
     if (is.data.frame(pairsVec)) {
       stopifnot(all(c("var", "covar") %in% names(pairsVec)))
-      keep <- intersect(c("var", "covar", "shapes", "inits"), names(pairsVec))
+      keep <- intersect(c("var", "covar", "shapes", "inits", "center"),
+                        names(pairsVec))
       df <- pairsVec[, keep, drop = FALSE]
       # If caller used a 'shape' character column instead of a 'shapes' list-col,
       # convert it so .expandShapes() can dispatch per-row shapes correctly.
@@ -1050,8 +1065,10 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
     covar_vec <- character(n)
     shapes_list <- vector("list", n)
     inits_list <- vector("list", n)
+    center_vec <- rep(NA_real_, n)
     has_shapes <- FALSE
     has_inits <- FALSE
+    has_center <- FALSE
     for (k in seq_len(n)) {
       p <- pairsVec[[k]]
       var_vec[k] <- if (is.list(p)) p$var else p[[1]]
@@ -1064,6 +1081,10 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
         inits_list[[k]] <- p$inits # named list, e.g. list(power=0.75, lin=0.01)
         has_inits <- TRUE
       }
+      if (is.list(p) && !is.null(p$center)) {
+        center_vec[k] <- as.numeric(p$center)
+        has_center <- TRUE
+      }
     }
     df <- data.frame(var = var_vec, covar = covar_vec, stringsAsFactors = FALSE)
     if (has_shapes) {
@@ -1071,6 +1092,9 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
     }
     if (has_inits) {
       df$inits <- inits_list
+    }
+    if (has_center) {
+      df$center <- center_vec
     }
     return(df)
   }
@@ -1249,6 +1273,29 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
 #'   levels.  When supplied, level selection uses this list directly instead
 #'   of deriving levels from \code{data} -- ensuring only levels that passed
 #'   the subject-frequency cutoff are tested.
+#' Override median centers with fixed reference values
+#'
+#' Given the enriched \code{pairs} (which already carries \code{type},
+#' \code{center}, and \code{raw_col}), replace the \code{center} of any
+#' continuous row whose raw covariate column is named in \code{centers} with
+#' the supplied fixed value.  A no-op when \code{centers} is \code{NULL}.
+#' @noRd
+.applyFixedCenters <- function(pairs, centers = NULL) {
+  if (is.null(centers) || length(centers) == 0 || nrow(pairs) == 0) {
+    return(pairs)
+  }
+  if (is.null(names(centers)) || any(!nzchar(names(centers)))) {
+    stop("'centers' must be a named numeric vector, e.g. c(BW = 70, CrCL = 95)")
+  }
+  for (nm in names(centers)) {
+    idx <- which(pairs$type == "continuous" & pairs$raw_col == nm)
+    if (length(idx) > 0) {
+      pairs$center[idx] <- as.numeric(centers[[nm]])
+    }
+  }
+  pairs
+}
+
 #' @return enriched data frame with additional columns \code{type},
 #'   \code{center}, \code{raw_col}, \code{level}, and (when missing values
 #'   are present) \code{has_missing}, \code{missing_check}, \code{missing_fill}
