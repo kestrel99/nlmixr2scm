@@ -1534,6 +1534,67 @@ test_that("runSCM: backward-removed covariates labeled 'dropped' in summaryTable
 })
 
 # =============================================================================
+# .pickForwardWinner / .pickBackwardWinner — winner-selection tie-breaking
+# -----------------------------------------------------------------------------
+# For df = 1 any dOFV >= ~70.5 makes 1 - pchisq() underflow to exactly 0, so
+# several genuinely-strong forward candidates tie at pchisqr == 0.  The old
+# which.min(pchisqr) then returned the FIRST row (alphabetical covar order),
+# which could pick a weaker covariate over a much stronger, collinear one and
+# steer the search into a wrong-shape branch.  The tie-break now prefers the
+# largest deltObjf (biggest OFV drop) forward, and the smallest deltObjf (least
+# OFV increase on removal) backward.
+# =============================================================================
+
+test_that(".pickForwardWinner: distinct p-values pick the smallest (unchanged behaviour)", {
+  rt <- data.frame(
+    covar    = c("BW", "CrCL"),
+    pchisqr  = c(1e-3, 1e-6),
+    deltObjf = c(20, 40)
+  )
+  # smallest pchisqr is row 2; ties never engaged
+  expect_equal(.cur$.pickForwardWinner(rt), 2L)
+})
+
+test_that(".pickForwardWinner: p-value underflow tie broken by largest deltObjf", {
+  # Both true covariates underflow to pchisqr == 0; alphabetical order puts BW
+  # first, but CrCL has the larger dOFV and must win.
+  rt <- data.frame(
+    covar    = c("BW", "CrCL", "SEX"),
+    pchisqr  = c(0, 0, 1e-7),
+    deltObjf = c(90.35, 183.05, 27.74)
+  )
+  expect_equal(.cur$.pickForwardWinner(rt), 2L)          # CrCL, dOFV 183
+  expect_equal(rt$covar[.cur$.pickForwardWinner(rt)], "CrCL")
+})
+
+test_that(".pickForwardWinner: full tie (equal pchisqr AND deltObjf) is deterministic first row", {
+  rt <- data.frame(
+    covar    = c("BW", "CrCL"),
+    pchisqr  = c(0, 0),
+    deltObjf = c(100, 100)
+  )
+  expect_equal(.cur$.pickForwardWinner(rt), 1L)
+})
+
+test_that(".pickBackwardWinner: distinct p-values drop the largest (unchanged behaviour)", {
+  rt <- data.frame(
+    covar    = c("BW", "CrCL"),
+    pchisqr  = c(0.02, 0.80),
+    deltObjf = c(5, 0.5)
+  )
+  # least important removal = highest pchisqr = row 2
+  expect_equal(.cur$.pickBackwardWinner(rt), 2L)
+})
+
+test_that(".pickBackwardWinner: p == 1 tie broken by smallest deltObjf", {
+  # Both removals are non-significant (pchisqr == 1); drop the one that raises
+  # OFV the least (smallest deltObjf).
+  rt <- data.frame(
+    covar    = c("BW", "CrCL"),
+    pchisqr  = c(1, 1),
+    deltObjf = c(3.0, 0.4)
+  )
+  expect_equal(.cur$.pickBackwardWinner(rt), 2L)          # CrCL raises OFV least
 # Retry-exhaustion best-attempt tracking
 #
 # .fitCandidatePairs() must keep the BEST (largest-dObjf) attempt across

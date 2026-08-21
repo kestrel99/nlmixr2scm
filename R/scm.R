@@ -2308,6 +2308,38 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
 #' @param verbose logical; if \code{TRUE} print candidate table before each
 #'   step, full results table after fitting, and parameter/omega detail when a
 #'   covariate is accepted
+#' Pick the winning forward-search candidate
+#'
+#' Winner = most significant candidate (smallest p-value). For \code{df = 1}
+#' any \code{dOFV >= ~70.5} makes \code{1 - pchisq()} underflow to exactly 0,
+#' so several strong candidates tie at \code{pchisqr == 0}. Such ties are
+#' broken by the LARGEST \code{deltObjf} (biggest OFV drop) rather than by row
+#' order, which would otherwise pick the first candidate alphabetically.
+#'
+#' @param resTable candidate results table with \code{pchisqr} and
+#'   \code{deltObjf} columns
+#' @return integer row index of the winning candidate
+#' @noRd
+.pickForwardWinner <- function(resTable) {
+  order(resTable$pchisqr, -resTable$deltObjf)[1]
+}
+
+#' Pick the backward-search candidate to drop
+#'
+#' The candidate to drop is the one whose removal causes the LEAST significant
+#' OFV increase (highest p-value = least important). Removals with
+#' \code{dOFV <= 0} all report \code{pchisqr == 1}, so such ties are broken by
+#' the SMALLEST \code{deltObjf} (least OFV increase on removal) rather than by
+#' row order.
+#'
+#' @param resTable candidate results table with \code{pchisqr} and
+#'   \code{deltObjf} columns
+#' @return integer row index of the candidate to drop
+#' @noRd
+.pickBackwardWinner <- function(resTable) {
+  order(-resTable$pchisqr, resTable$deltObjf)[1]
+}
+
 #' @return \code{list(final_fit, resTableComplete)}
 #' @noRd
 #' @author Vipul Mann, Matthew Fidler, Vishal Sarsani
@@ -2444,7 +2476,10 @@ forwardSearch <- function(
     }
 
     resTable <- do.call(rbind, lapply(results, `[[`, "stats"))
-    bestIdx <- which.min(resTable$pchisqr)
+    # Winner = most significant candidate (smallest p-value). Ties at
+    # pchisqr == 0 (p-value underflow for strong candidates) are broken by the
+    # largest deltObjf; see .pickForwardWinner().
+    bestIdx <- .pickForwardWinner(resTable)
     bestRow <- resTable[bestIdx, , drop = FALSE]
 
     # -- verbose: show all candidate results -------------------------------
@@ -2842,9 +2877,10 @@ backwardSearch <- function(
     }
 
     resTable <- do.call(rbind, lapply(results, `[[`, "stats"))
-    # Backward: the candidate to drop is the one whose removal causes the
-    # LEAST significant OFV increase (highest p-value = least important).
-    bestIdx <- which.max(resTable$pchisqr)
+    # Backward: drop the candidate whose removal is LEAST significant (highest
+    # p-value). Ties at pchisqr == 1 (dOFV <= 0) are broken by the smallest
+    # deltObjf; see .pickBackwardWinner().
+    bestIdx <- .pickBackwardWinner(resTable)
     bestRow <- resTable[bestIdx, , drop = FALSE]
 
     # -- verbose: show all candidate results -------------------------------
