@@ -543,6 +543,9 @@ test_that("Build ui from the covariate", {
 # ==== Make dummy variable cols and updated covarsVec
 
 test_that("Make dummy variable cols and updated covarsVec", {
+  # CMT is record-level, not subject-level: every subject's first record is a
+  # dose (CMT 1), so under the default per-ID counting it collapses to a single
+  # level and no indicator column is built.
   covarsVec <- c("WT", "BMI")
   catcovarsVec <- "CMT"
   funstring1 <- .cur$scmAddCatCovariates(
@@ -550,19 +553,34 @@ test_that("Make dummy variable cols and updated covarsVec", {
     covarsVec,
     catcovarsVec
   )[[2]]
-  funstring2 <- intersect(funstring1, "CMT_2")
-  funstring3 <- "CMT_2"
-  expect_equal(funstring2, funstring3)
+  expect_equal(funstring1, c("WT", "BMI"))
 })
 
-test_that("Make dummy variable cols and updated covarsVec", {
+test_that("Make dummy variable cols and updated covarsVec, freqBy observation", {
+  # theo_sd$CMT is 12 dose rows at level 1 against 132 observation rows at
+  # level 2, so counting by observation makes level 2 the reference and builds
+  # only CMT_1.
   covarsVec <- c("WT", "BMI")
   catcovarsVec <- "CMT"
   funstring1 <- .cur$scmAddCatCovariates(
     nlmixr2data::theo_sd,
     covarsVec,
-    catcovarsVec
+    catcovarsVec,
+    freqBy = "observation"
   )[[2]]
-  funstring2 <- intersect(funstring1, "CMT_1")
-  expect_length(funstring2, 0)
+  expect_equal(intersect(funstring1, "CMT_1"), "CMT_1")
+  expect_length(intersect(funstring1, "CMT_2"), 0)
+})
+
+test_that("Make dummy variable cols and updated covarsVec, freqBy auto", {
+  # CMT varies within subject, so "auto" selects per-observation counting
+  covarsVec <- c("WT", "BMI")
+  catcovarsVec <- "CMT"
+  funstring1 <- .cur$scmAddCatCovariates(
+    nlmixr2data::theo_sd,
+    covarsVec,
+    catcovarsVec,
+    freqBy = "auto"
+  )[[2]]
+  expect_equal(intersect(funstring1, "CMT_1"), "CMT_1")
 })

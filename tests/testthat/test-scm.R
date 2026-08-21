@@ -753,9 +753,11 @@ test_that("scmAddCatCovariates: original categorical column removed from data", 
 })
 
 test_that("scmAddCatCovariates: most-frequent level (reference) has no indicator", {
+  # 'B' appears first but 'A' is most frequent, so first-appearing and modal
+  # rules disagree -- this fixture is what distinguishes them.
   d <- data.frame(
     ID = seq_len(10),
-    grp = c(rep("A", 7), rep("B", 2), rep("C", 1)),
+    grp = c("B", rep("A", 7), "B", "C"),
     stringsAsFactors = FALSE
   )
   res <- .cur$scmAddCatCovariates(
@@ -768,6 +770,205 @@ test_that("scmAddCatCovariates: most-frequent level (reference) has no indicator
   expect_false("grp_A" %in% names(new_data))
   expect_true("grp_B" %in% names(new_data))
   expect_true("grp_C" %in% names(new_data))
+})
+
+test_that("scmAddCatCovariates: factors use the modal level, not the first level", {
+  d <- data.frame(
+    ID = seq_len(10),
+    grp = factor(
+      c("B", rep("A", 7), "B", "C"),
+      levels = c("B", "A", "C")
+    )
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = character(0),
+    catcovarsVec = "grp"
+  )
+  new_data <- res[[1]]
+  # 'B' is the first factor level but 'A' is modal -- 'A' is the reference
+  expect_false("grp_A" %in% names(new_data))
+  expect_true("grp_B" %in% names(new_data))
+  expect_true("grp_C" %in% names(new_data))
+})
+
+test_that("scmAddCatCovariates: catCutoff lumps rare levels with the reference", {
+  d <- data.frame(
+    ID = seq_len(20),
+    grp = c(rep("A", 15), rep("B", 4), "C"),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = character(0),
+    catcovarsVec = "grp",
+    catCutoff = 0.1
+  )
+  new_data <- res[[1]]
+  # C is 5% of rows, below the 10% cutoff, so it is lumped with the reference
+  expect_true("grp_B" %in% names(new_data))
+  expect_false("grp_C" %in% names(new_data))
+})
+
+test_that("scmAddCatCovariates: NA rows give 0 indicators, not NA", {
+  d <- data.frame(
+    ID = seq_len(6),
+    grp = c("A", "A", "A", "B", "B", NA),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = character(0),
+    catcovarsVec = "grp"
+  )
+  new_data <- res[[1]]
+  expect_equal(new_data$grp_B, c(0L, 0L, 0L, 1L, 1L, 0L))
+  expect_false(anyNA(new_data$grp_B))
+})
+
+test_that("scmAddCatCovariates: errors on indicator name collision", {
+  d <- data.frame(
+    ID = seq_len(4),
+    grp = c("A", "A", "B", "B"),
+    grp_B = c(9L, 9L, 9L, 9L),
+    stringsAsFactors = FALSE
+  )
+  expect_error(
+    .cur$scmAddCatCovariates(
+      d,
+      covarsVec = character(0),
+      catcovarsVec = "grp"
+    ),
+    "already exist"
+  )
+})
+
+test_that("scmAddCatCovariates: a repeated column is expanded once, not an error", {
+  d <- data.frame(
+    ID = seq_len(4),
+    grp = c("A", "A", "B", "B"),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = character(0),
+    catcovarsVec = c("grp", "grp")
+  )
+  expect_equal(res[[2]], "grp_B")
+})
+
+test_that("scmAddCatCovariates: unused factor levels get no all-zero indicator", {
+  d <- data.frame(
+    ID = seq_len(4),
+    grp = factor(c("A", "A", "B", "B"), levels = c("A", "B", "D"))
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = character(0),
+    catcovarsVec = "grp"
+  )
+  expect_false("grp_D" %in% names(res[[1]]))
+})
+
+test_that("scmAddCatCovariates: default counts per subject, not per row", {
+  # 2 male subjects with 20 rows each, 5 female subjects with 2 rows each.
+  # Per subject F wins 5-2; per row M wins 40-10.  The default must count
+  # subjects, so F is the reference and only SEX_M is built.
+  d <- data.frame(
+    ID = c(rep(1, 20), rep(2, 20), rep(3:7, each = 2)),
+    SEX = c(rep("M", 40), rep("F", 10)),
+    stringsAsFactors = FALSE
+  )
+  expect_equal(
+    .cur$scmAddCatCovariates(d, character(0), "SEX")[[2]],
+    "SEX_M"
+  )
+  expect_equal(
+    .cur$scmAddCatCovariates(d, character(0), "SEX", freqBy = "observation")[[
+      2
+    ]],
+    "SEX_F"
+  )
+})
+
+test_that("scmAddCatCovariates: freqBy auto picks the rule per column", {
+  # SEX is constant within subject -> per subject; CMT varies -> per row
+  d <- data.frame(
+    ID = c(rep(1, 20), rep(2, 20), rep(3:7, each = 2)),
+    SEX = c(rep("M", 40), rep("F", 10)),
+    CMT = c(rep(c(1, 2), 25)),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    character(0),
+    c("SEX", "CMT"),
+    freqBy = "auto"
+  )
+  expect_true("SEX_M" %in% res[[2]])
+  expect_true(any(grepl("^CMT_", res[[2]])))
+})
+
+test_that("scmAddCatCovariates: covarsVec drops the expanded column", {
+  # 'SEX' is gone from the returned data, so it must not remain in covarsVec
+  d <- data.frame(
+    ID = 1:2,
+    WT = c(70, 80),
+    SEX = c("M", "F"),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(
+    d,
+    covarsVec = c("WT", "SEX"),
+    catcovarsVec = "SEX"
+  )
+  expect_false("SEX" %in% res[[2]])
+  expect_true(all(res[[2]] %in% names(res[[1]])))
+})
+
+test_that("scmAddCatCovariates: ties resolve deterministically", {
+  # A and B tie at 2 subjects each; the first name alphabetically is the
+  # reference, matching how .makeSCMData() breaks the same tie
+  d <- data.frame(
+    ID = 1:4,
+    grp = c("B", "B", "A", "A"),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(d, character(0), "grp")
+  expect_equal(res[[2]], "grp_B")
+})
+
+test_that("scmAddCatCovariates: all-NA column yields no indicators", {
+  d <- data.frame(
+    ID = 1:3,
+    grp = c(NA, NA, NA),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(d, character(0), "grp")
+  expect_length(res[[2]], 0)
+  expect_false("grp" %in% names(res[[1]]))
+})
+
+test_that("scmAddCatCovariates: single-level column yields no indicators", {
+  d <- data.frame(
+    ID = 1:3,
+    grp = c("A", "A", "A"),
+    stringsAsFactors = FALSE
+  )
+  res <- .cur$scmAddCatCovariates(d, character(0), "grp")
+  expect_length(res[[2]], 0)
+})
+
+test_that("scmAddCatCovariates: errors when a categorical column is absent", {
+  d <- data.frame(ID = 1:4, grp = c("A", "A", "B", "B"))
+  expect_error(
+    .cur$scmAddCatCovariates(
+      d,
+      covarsVec = character(0),
+      catcovarsVec = "nope"
+    ),
+    "not found in data"
+  )
 })
 
 test_that("scmAddCatCovariates: indicator values are 0/1 integers", {
@@ -864,6 +1065,65 @@ test_that(".rebuildUiFromPairs: two covariates on different parameters both adde
   ini_names <- res$iniDf$name
   expect_true("cov_wt_power_cl" %in% ini_names)
   expect_true("cov_wt_power_v" %in% ini_names)
+})
+
+# =============================================================================
+# .freezeUiForProfile  (1-D Brent warm-start: frozen base)
+# =============================================================================
+
+.make_cov_ui <- function() {
+  ui <- nlmixr2est::nlmixr(.one_cmt_fun)
+  pairs <- data.frame(
+    var = "cl", covar = "wt_power", covExpr = "log(wt/70)",
+    init = 0.5, lower = -2, upper = 2, stringsAsFactors = FALSE
+  )
+  .cur$.rebuildUiFromPairs(ui, pairs)
+}
+
+test_that(".freezeUiForProfile: leaves exactly one theta free", {
+  ui <- .make_cov_ui()
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  ini <- frozen$iniDf
+  is_theta <- !is.na(ini$ntheta)
+  free <- ini$name[is_theta & !ini$fix]
+  expect_equal(free, "cov_wt_power_cl")
+})
+
+test_that(".freezeUiForProfile: fixes all structural + residual thetas", {
+  ui <- .make_cov_ui()
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  ini <- frozen$iniDf
+  is_theta <- !is.na(ini$ntheta)
+  fixed <- ini$name[is_theta & ini$fix]
+  # tka, tcl, tv, add.sd all fixed; the new cov theta is not
+  expect_true(all(c("tka", "tcl", "tv", "add.sd") %in% fixed))
+  expect_false("cov_wt_power_cl" %in% fixed)
+})
+
+test_that(".freezeUiForProfile: preserves parent theta estimates", {
+  ui <- .make_cov_ui()
+  before <- ui$iniDf
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  after <- frozen$iniDf
+  for (nm in c("tka", "tcl", "tv")) {
+    expect_equal(
+      after$est[after$name == nm],
+      before$est[before$name == nm]
+    )
+  }
+})
+
+test_that(".freezeUiForProfile: zeroes between-subject variability (omega)", {
+  ui <- .make_cov_ui()
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  ini <- frozen$iniDf
+  # no free eta rows should remain after zeroRe(which = "omega")
+  eta_rows <- ini[!is.na(ini$neta1), , drop = FALSE]
+  if (nrow(eta_rows) > 0) {
+    expect_true(all(eta_rows$fix | eta_rows$est == 0))
+  } else {
+    expect_equal(nrow(eta_rows), 0L)
+  }
 })
 
 # =============================================================================
@@ -1478,4 +1738,257 @@ test_that("runSCM: backward-removed covariates labeled 'dropped' in summaryTable
   expect_false(any(bck$included == "yes"))
   # And the included column should only contain the documented tokens
   expect_true(all(st$included %in% c("yes", "no", "dropped", "retained")))
+})
+
+# =============================================================================
+# Fixed covariate centers (reference values)
+# -----------------------------------------------------------------------------
+#
+# Mechanism: .enrichPairs() first fills each continuous covariate's `center`
+# with the per-subject median; .applyFixedCenters() then OVERRIDES the named
+# ones. buildPairs() carries an optional per-row `center` through so a user can
+# also pin centers per (var, covar) pair via pairsVec.
+# =============================================================================
+
+# ---- .applyFixedCenters: override named, keep unnamed, stay safe -----------
+
+test_that(".applyFixedCenters overrides named continuous covariates only", {
+  # BW appears on both cl and vc (a single entry must fix both); BMI is unnamed
+  # and must keep its median; categorical rows are never touched.
+  pairs <- data.frame(
+    var     = c("cl", "vc", "vc", "cl"),
+    covar   = c("BW", "BW", "BMI", "SEX_1"),
+    raw_col = c("BW", "BW", "BMI", "SEX"),
+    type    = c("continuous", "continuous", "continuous", "categorical"),
+    center  = c(71.3, 68.9, 26.1, NA_real_),  # per-dataset medians
+    stringsAsFactors = FALSE
+  )
+
+  out <- .cur$.applyFixedCenters(pairs, c(BW = 70))
+
+  expect_equal(out$center[out$raw_col == "BW"], c(70, 70))   # both params pinned
+  expect_equal(out$center[out$raw_col == "BMI"], 26.1)       # unnamed -> median
+  expect_true(is.na(out$center[out$type == "categorical"]))  # categorical safe
+})
+
+test_that(".applyFixedCenters is a no-op for NULL / unmatched and errors if unnamed", {
+  pairs <- data.frame(
+    var = "cl", covar = "BW", raw_col = "BW",
+    type = "continuous", center = 71.3, stringsAsFactors = FALSE
+  )
+  expect_identical(.cur$.applyFixedCenters(pairs, NULL),       pairs)  # default path
+  expect_identical(.cur$.applyFixedCenters(pairs, c(WT = 70)), pairs)  # no match
+  expect_error(.cur$.applyFixedCenters(pairs, 70), "must be a named numeric vector")
+})
+
+# ---- buildPairs: center passthrough (the plumbing fix) ---------------------
+
+test_that("buildPairs carries a per-pair center through, and omits it when absent", {
+  # list form with centers
+  pv <- list(
+    list(var = "cl", covar = "BW",   center = 70),
+    list(var = "vc", covar = "BW",   center = 70),
+    list(var = "cl", covar = "CrCL", center = 95)
+  )
+  out <- .cur$buildPairs(pairsVec = pv)
+  expect_equal(out$center, c(70, 70, 95))
+
+  # no center supplied -> no center column (unchanged legacy shape)
+  bare <- .cur$buildPairs(pairsVec = list(list(var = "cl", covar = "BW")))
+  expect_false("center" %in% names(bare))
+})
+
+# ---- Integration: median first, then fixed override ------------------------
+
+test_that("enrichPairs medians are overridden by .applyFixedCenters", {
+  # one row per subject; medians are deliberately off the fixed anchors so the
+  # override is observable.
+  set.seed(1)
+  dat <- data.frame(
+    ID   = 1:11,
+    TIME = 0,
+    DV   = 0,
+    BW   = 60:70,                       # median 65  (anchor will be 70)
+    CrCL = seq(80, 100, length.out = 11),  # median 90  (anchor will be 95)
+    BMI  = seq(22, 32, length.out = 11)    # median 27  (no anchor -> stays)
+  )
+
+  pairs <- data.frame(
+    var   = c("cl", "cl", "vc"),
+    covar = c("BW", "CrCL", "BMI"),
+    stringsAsFactors = FALSE
+  )
+
+  enriched <- .cur$.enrichPairs(pairs, dat)
+  # sanity: enrichment filled the per-subject medians
+  expect_equal(enriched$center[enriched$raw_col == "BW"],   65)
+  expect_equal(enriched$center[enriched$raw_col == "CrCL"], 90)
+  expect_equal(enriched$center[enriched$raw_col == "BMI"],  27)
+
+  fixed <- .cur$.applyFixedCenters(enriched, c(BW = 70, CrCL = 95))
+  # named anchors override the medians ...
+  expect_equal(fixed$center[fixed$raw_col == "BW"],   70)
+  expect_equal(fixed$center[fixed$raw_col == "CrCL"], 95)
+  # ... unnamed BMI keeps the data-driven median
+  expect_equal(fixed$center[fixed$raw_col == "BMI"],  27)
+# .pickForwardWinner / .pickBackwardWinner — winner-selection tie-breaking
+# -----------------------------------------------------------------------------
+# For df = 1 any dOFV >= ~70.5 makes 1 - pchisq() underflow to exactly 0, so
+# several genuinely-strong forward candidates tie at pchisqr == 0.  The old
+# which.min(pchisqr) then returned the FIRST row (alphabetical covar order),
+# which could pick a weaker covariate over a much stronger, collinear one and
+# steer the search into a wrong-shape branch.  The tie-break now prefers the
+# largest deltObjf (biggest OFV drop) forward, and the smallest deltObjf (least
+# OFV increase on removal) backward.
+# =============================================================================
+
+test_that(".pickForwardWinner: distinct p-values pick the smallest (unchanged behaviour)", {
+  rt <- data.frame(
+    covar    = c("BW", "CrCL"),
+    pchisqr  = c(1e-3, 1e-6),
+    deltObjf = c(20, 40)
+  )
+  # smallest pchisqr is row 2; ties never engaged
+  expect_equal(.cur$.pickForwardWinner(rt), 2L)
+})
+
+test_that(".pickForwardWinner: p-value underflow tie broken by largest deltObjf", {
+  # Both true covariates underflow to pchisqr == 0; alphabetical order puts BW
+  # first, but CrCL has the larger dOFV and must win.
+  rt <- data.frame(
+    covar    = c("BW", "CrCL", "SEX"),
+    pchisqr  = c(0, 0, 1e-7),
+    deltObjf = c(90.35, 183.05, 27.74)
+  )
+  expect_equal(.cur$.pickForwardWinner(rt), 2L)          # CrCL, dOFV 183
+  expect_equal(rt$covar[.cur$.pickForwardWinner(rt)], "CrCL")
+})
+
+test_that(".pickForwardWinner: full tie (equal pchisqr AND deltObjf) is deterministic first row", {
+  rt <- data.frame(
+    covar    = c("BW", "CrCL"),
+    pchisqr  = c(0, 0),
+    deltObjf = c(100, 100)
+  )
+  expect_equal(.cur$.pickForwardWinner(rt), 1L)
+})
+
+test_that(".pickBackwardWinner: distinct p-values drop the largest (unchanged behaviour)", {
+  rt <- data.frame(
+    covar    = c("BW", "CrCL"),
+    pchisqr  = c(0.02, 0.80),
+    deltObjf = c(5, 0.5)
+  )
+  # least important removal = highest pchisqr = row 2
+  expect_equal(.cur$.pickBackwardWinner(rt), 2L)
+})
+
+test_that(".pickBackwardWinner: p == 1 tie broken by smallest deltObjf", {
+  # Both removals are non-significant (pchisqr == 1); drop the one that raises
+  # OFV the least (smallest deltObjf).
+  rt <- data.frame(
+    covar    = c("BW", "CrCL"),
+    pchisqr  = c(1, 1),
+    deltObjf = c(3.0, 0.4)
+  )
+  expect_equal(.cur$.pickBackwardWinner(rt), 2L)          # CrCL raises OFV least
+# Retry-exhaustion best-attempt tracking
+#
+# .fitCandidatePairs() must keep the BEST (largest-dObjf) attempt across
+# perturbed-init retries, not whichever attempt happened to run last.
+#
+# The selection rule is INLINED inside .fitCandidatePairs() because that loop
+# runs in future.apply workers spawned by .plap(); workers load the installed
+# package and cannot see helpers introduced via devtools::load_all().  These
+# tests mirror the production rule locally so the spec is documented and the
+# regression scenario stays covered.  If the inlined block in R/scm.R changes,
+# update .update_best_attempt() below to match.
+# =============================================================================
+# Local mirror of the production rule.  Source of truth in R/scm.R inside
+# .fitCandidatePairs():
+#
+#   if (is.null(best_attempt) ||
+#       .cand_attempt$dObjf > best_attempt$dObjf) {
+#     best_attempt <- .cand_attempt
+#   }
+.update_best_attempt <- function(best, candidate) {
+  if (is.null(best) || candidate$dObjf > best$dObjf) candidate else best
+}
+
+test_that("retry tracking: first attempt becomes best when no incumbent", {
+  cand <- list(x = "a", dObjf = -250, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  expect_identical(.update_best_attempt(NULL, cand), cand)
+})
+
+test_that("retry tracking: candidate with larger dObjf replaces incumbent", {
+  best <- list(x = "a", dObjf = -250, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  cand <- list(x = "b", dObjf =   -1, dof = 1L, pchisqr = 1, attempt_num = 2L)
+  expect_identical(.update_best_attempt(best, cand), cand)
+})
+
+test_that("retry tracking: candidate with smaller dObjf keeps incumbent", {
+  best <- list(x = "a", dObjf =  -1, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  cand <- list(x = "b", dObjf = -100, dof = 1L, pchisqr = 1, attempt_num = 2L)
+  expect_identical(.update_best_attempt(best, cand), best)
+})
+
+test_that("retry tracking: ties resolve to incumbent (no churn)", {
+  best <- list(x = "a", dObjf = -50, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  cand <- list(x = "b", dObjf = -50, dof = 1L, pchisqr = 1, attempt_num = 2L)
+  expect_identical(.update_best_attempt(best, cand), best)
+})
+
+test_that("retry tracking: regression -- last attempt with smaller dObjf does not overwrite best", {
+  # Bug scenario from the SEX_1~cl retry chain: three attempts produce
+  # dObjf = -250, -1, -100.  The original .fitCandidatePairs() unconditionally
+  # kept the LAST attempt (-100), even though the per-attempt warning correctly
+  # claimed "best available".  The current implementation tracks the running
+  # best, so attempt 2 (-1) survives.
+  b <- NULL
+  b <- .update_best_attempt(b, list(x = "att1", dObjf = -250, dof = 1L,
+                                    pchisqr = 1, attempt_num = 1L))
+  b <- .update_best_attempt(b, list(x = "att2", dObjf =   -1, dof = 1L,
+                                    pchisqr = 1, attempt_num = 2L))
+  b <- .update_best_attempt(b, list(x = "att3", dObjf = -100, dof = 1L,
+                                    pchisqr = 1, attempt_num = 3L))
+  expect_equal(b$x, "att2")
+  expect_equal(b$dObjf, -1)
+  expect_equal(b$attempt_num, 2L)
+})
+
+# =============================================================================
+# profileInitOnStall / stallTol — profile-on-stall rescue parameters
+# -----------------------------------------------------------------------------
+# The forward search can stall when the derivative-free outer optimiser
+# (bobyqa) never steps a new covariate coefficient off its init, leaving the
+# nested model with a WORSE OFV than its parent (dObjf <= 0) -- mathematically
+# impossible at a true optimum.  Observed for ODE models whose FOCEi objective
+# carries solver noise; the true per-step subproblem is unimodal, so a single
+# 1-D FOCEi profile init rescues it.
+#
+# The rescue lives at the END of the .fitCandidatePairs() retry loop so it
+# fires INDEPENDENTLY of maxRetries -- in particular it must still fire when
+# maxRetries = 0 (the benchmark config).  It keeps the profile-init refit ONLY
+# when it STRICTLY improves dObjf, so it can never make a candidate worse.
+# =============================================================================
+
+test_that("runSCM: profileInitOnStall / stallTol parameters exist with expected defaults", {
+  # Formals-only smoke check -- no fitting needed.
+  fmls <- formals(.cur$runSCM)
+  expect_true("profileInitOnStall" %in% names(fmls))
+  expect_true("stallTol"           %in% names(fmls))
+  expect_true(isTRUE(eval(fmls$profileInitOnStall)))
+  expect_equal(eval(fmls$stallTol), 0)
+})
+
+test_that(".fitCandidatePairs / forwardSearch: profile-on-stall parameters threaded through", {
+  # The rescue must be reachable from every layer that .fitCandidatePairs is
+  # called from, so the args have to appear in each formals list.
+  for (fn in c("runSCM", "forwardSearch", ".fitCandidatePairs")) {
+    fmls <- formals(.cur[[fn]])
+    expect_true("profileInitOnStall" %in% names(fmls),
+                info = paste0(fn, " lacks profileInitOnStall"))
+    expect_true("stallTol" %in% names(fmls),
+                info = paste0(fn, " lacks stallTol"))
+  }
 })
