@@ -1023,36 +1023,138 @@ scmBuildUpdatedUi <- function(
 }
 
 
-# Create dummy variable columns and return updated covariate metadata.
-scmAddCatCovariates <- function(data, covarsVec, catcovarsVec) {
+#' Create dummy variable columns and return updated covariate metadata
+#'
+#' The reference level is the most frequent level, and non-reference levels
+#' whose proportion falls below \code{catCutoff} are lumped with the reference
+#' and receive no indicator column.  Previously the reference was whichever
+#' level happened to appear first, which is not a frequency rule at all.
+#'
+#' How frequency is counted depends on the column, because the two available
+#' rules are each right for a different kind of covariate:
+#' \describe{
+#'   \item{per subject}{One vote per unique ID, taken from each subject's first
+#'     record.  Used when the column is constant within every subject, i.e. a
+#'     genuine subject-level covariate such as sex or race.  This is the rule
+#'     \code{.makeSCMData()} applies on the \code{runSCM()} search path, so
+#'     both routes agree on the reference level even when subjects contribute
+#'     unequal numbers of rows.  Counting such a column by row would let a few
+#'     densely sampled subjects outvote the majority.}
+#'   \item{per observation}{One vote per data row.  Used when the column varies
+#'     within a subject, e.g. \code{CMT}.  Per-subject counting is meaningless
+#'     for such a column -- every subject would contribute only whichever level
+#'     happened to land in its first record.}
+#' }
+#' Both rules are available via \code{freqBy}, which defaults to \code{"id"} --
+#' the rule \code{.makeSCMData()} uses, and the right one for the subject-level
+#' covariates SCM actually tests.  Use \code{"observation"} for a column that is
+#' not unique to a subject, or \code{"auto"} to choose per column by testing
+#' whether any subject carries more than one non-missing level.  When
+#' \code{data} has no recognisable ID column each row is treated as its own
+#' subject, so all three settings reduce to per-row counting.
+#'
+#' @param data data frame containing the categorical columns
+#' @param covarsVec character vector of covariate names to extend.  Any entry
+#'   naming a column in \code{catcovarsVec} is dropped, since that column no
+#'   longer exists in the returned data.
+#' @param catcovarsVec character vector of categorical columns to expand
+#' @param catCutoff minimum proportion of subjects (or of rows, when counting
+#'   per observation) in a non-reference level for that level to get an
+#'   indicator column.  Default \code{0}, which keeps every observed
+#'   non-reference level.
+#' @param freqBy how to count level frequencies: \code{"id"} (default) counts
+#'   one vote per subject, \code{"observation"} one vote per row, and
+#'   \code{"auto"} picks per column -- per subject when the column is constant
+#'   within every subject, per observation when it varies within a subject.
+#' @return list of the updated data (original categorical columns removed) and
+#'   the updated covariate vector
+#' @noRd
+scmAddCatCovariates <- function(
+  data,
+  covarsVec,
+  catcovarsVec,
+  catCutoff = 0,
+  freqBy = c("id", "observation", "auto")
+) {
   # check for valid inputs
   checkmate::assert_data_frame(data)
   checkmate::assert_character(covarsVec)
   checkmate::assert_character(catcovarsVec)
-  # create new catcovarsvec
+  checkmate::assert_number(catCutoff, lower = 0, upper = 1)
+  freqBy <- match.arg(freqBy)
+
+  idCol <- .idColumn(data)
+  if (!idCol %in% names(data)) {
+    idCol <- NULL
+  }
+
   newcatvars <- character(0)
-  for (col in catcovarsVec) {
-    if (is.factor(data[[col]])) {
-      uniqueVals <- levels(data[[col]])
-      if (any(is.na(data[[col]]))) {
-        uniqueVals <- c(uniqueVals, NA)
-      }
-      # Else by order values appear.
-    } else {
-      uniqueVals <- unique(data[[col]])
+  # Deduplicate so a repeated column does not trip the collision check below
+  for (col in unique(catcovarsVec)) {
+    if (!col %in% names(data)) {
+      stop(
+        "Categorical covariate '",
+        col,
+        "' not found in data.",
+        call. = FALSE
+      )
     }
-    uniqueVals <- as.character(uniqueVals)
-    # Remove NA values and first dummy
-    uniqueVals <- uniqueVals[!is.na(uniqueVals)][-1]
-    for (uniqueValue in uniqueVals) {
-      colname <- paste0(col, "_", uniqueValue)
-      data[, colname] <- as.integer(as.character(data[[col]]) == uniqueValue)
+
+    keep <- !is.na(data[[col]])
+    vals <- as.character(data[[col]])[keep]
+    if (length(vals) == 0L) {
+      next
+    }
+
+    # Choose the counting rule for this column.  Per-subject counting is right
+    # for subject-level covariates; per-observation is the only sensible rule
+    # for a column that is not unique to a subject, since otherwise a subject
+    # contributes only whichever level landed in its first record.
+    byId <- !is.null(idCol) && freqBy != "observation"
+    if (byId && freqBy == "auto") {
+      ids <- data[[idCol]][keep]
+      distinctPairs <- !duplicated(data.frame(ids, vals))
+      byId <- anyDuplicated(ids[distinctPairs]) == 0L
+    }
+    if (byId) {
+      # One vote per subject, taken from that subject's first record
+      vals <- vals[!duplicated(data[[idCol]][keep])]
+    }
+
+    tbl <- sort(table(vals), decreasing = TRUE)
+    props <- tbl / sum(tbl)
+    ref <- names(tbl)[[1L]] # most frequent level = reference
+    lvls <- names(props)[props >= catCutoff & names(props) != ref]
+    if (length(lvls) == 0L) {
+      next
+    }
+
+    # Collision check -- stop rather than silently overwrite
+    collisions <- paste0(col, "_", lvls)[
+      paste0(col, "_", lvls) %in% names(data)
+    ]
+    if (length(collisions) > 0L) {
+      stop(
+        "Cannot create indicator column(s): ",
+        paste(collisions, collapse = ", "),
+        " -- name(s) already exist in data.",
+        call. = FALSE
+      )
+    }
+
+    for (lev in lvls) {
+      colname <- paste0(col, "_", lev)
+      data[[colname]] <- as.integer(
+        !is.na(data[[col]]) & as.character(data[[col]]) == lev
+      )
       newcatvars <- c(newcatvars, colname)
     }
   }
   # Remove original categorical variables
-  updatedData <- data[, !(names(data) %in% catcovarsVec)]
-  # Update entire covarsvec with added categorical variables
-  updcovarsVec <- c(covarsVec, newcatvars)
+  updatedData <- data[, !(names(data) %in% catcovarsVec), drop = FALSE]
+  # Update entire covarsvec with added categorical variables.  Drop the
+  # expanded columns themselves, which no longer exist in updatedData --
+  # keeping them would make updatedData[, updcovarsVec] an error.
+  updcovarsVec <- c(setdiff(covarsVec, catcovarsVec), newcatvars)
   list(updatedData, updcovarsVec)
 }
