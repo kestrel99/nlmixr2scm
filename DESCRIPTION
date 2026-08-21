@@ -1,17 +1,18 @@
 Package: nlmixr2scm
 Title: Stepwise Covariate Modeling for nlmixr2 Models
-Version: 0.2
+Version: 0.3
 Authors@R: c(
     person("Matthew", "Fidler", email = "matthew.fidler@gmail.com", role = "aut",
            comment = c(ORCID = "0000-0001-8538-6691")),
+    person("Justin", "Wilkins", email = "justin.wilkins@occams.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-7099-9396")),
+    person("Yaping", "Liu", email = "yaping.liu_ext@novartis.com", role = "aut"),
+    person("Bill", "Denney", email = "wdenney@humanpredictions.com", role = "aut",
+           comment = c(ORCID = "0000-0002-5759-428X")),
     person("Vipul", "Mann", email = "vm2583@columbia.edu", role = "aut"),
     person("Vishal", "Sarsani", email = "vsarsani@umass.edu", role = "aut",
            comment = c(ORCID = "0000-0002-9272-3438")),
-    person("Christian", "Bartels", email = "christian.bartels@novartis.com", role = "ctb"),
-    person("Bill", "Denney", email = "wdenney@humanpredictions.com", role = "aut",
-           comment = c(ORCID = "0000-0002-5759-428X")),
-    person("Justin", "Wilkins", email = "justin.wilkins@occams.com", role = c("aut", "cre"),
-           comment = c(ORCID = "0000-0002-7099-9396"))
+    person("Christian", "Bartels", email = "christian.bartels@novartis.com", role = "ctb")
   )
 Maintainer: Justin Wilkins <justin.wilkins@occams.com>
 Description: Stepwise covariate modeling tools for nlmixr2 fits, including
