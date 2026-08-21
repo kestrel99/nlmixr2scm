@@ -1735,6 +1735,96 @@ test_that("runSCM: backward-removed covariates labeled 'dropped' in summaryTable
 })
 
 # =============================================================================
+# Fixed covariate centers (reference values)
+# -----------------------------------------------------------------------------
+#
+# Mechanism: .enrichPairs() first fills each continuous covariate's `center`
+# with the per-subject median; .applyFixedCenters() then OVERRIDES the named
+# ones. buildPairs() carries an optional per-row `center` through so a user can
+# also pin centers per (var, covar) pair via pairsVec.
+# =============================================================================
+
+# ---- .applyFixedCenters: override named, keep unnamed, stay safe -----------
+
+test_that(".applyFixedCenters overrides named continuous covariates only", {
+  # BW appears on both cl and vc (a single entry must fix both); BMI is unnamed
+  # and must keep its median; categorical rows are never touched.
+  pairs <- data.frame(
+    var     = c("cl", "vc", "vc", "cl"),
+    covar   = c("BW", "BW", "BMI", "SEX_1"),
+    raw_col = c("BW", "BW", "BMI", "SEX"),
+    type    = c("continuous", "continuous", "continuous", "categorical"),
+    center  = c(71.3, 68.9, 26.1, NA_real_),  # per-dataset medians
+    stringsAsFactors = FALSE
+  )
+
+  out <- .cur$.applyFixedCenters(pairs, c(BW = 70))
+
+  expect_equal(out$center[out$raw_col == "BW"], c(70, 70))   # both params pinned
+  expect_equal(out$center[out$raw_col == "BMI"], 26.1)       # unnamed -> median
+  expect_true(is.na(out$center[out$type == "categorical"]))  # categorical safe
+})
+
+test_that(".applyFixedCenters is a no-op for NULL / unmatched and errors if unnamed", {
+  pairs <- data.frame(
+    var = "cl", covar = "BW", raw_col = "BW",
+    type = "continuous", center = 71.3, stringsAsFactors = FALSE
+  )
+  expect_identical(.cur$.applyFixedCenters(pairs, NULL),       pairs)  # default path
+  expect_identical(.cur$.applyFixedCenters(pairs, c(WT = 70)), pairs)  # no match
+  expect_error(.cur$.applyFixedCenters(pairs, 70), "must be a named numeric vector")
+})
+
+# ---- buildPairs: center passthrough (the plumbing fix) ---------------------
+
+test_that("buildPairs carries a per-pair center through, and omits it when absent", {
+  # list form with centers
+  pv <- list(
+    list(var = "cl", covar = "BW",   center = 70),
+    list(var = "vc", covar = "BW",   center = 70),
+    list(var = "cl", covar = "CrCL", center = 95)
+  )
+  out <- .cur$buildPairs(pairsVec = pv)
+  expect_equal(out$center, c(70, 70, 95))
+
+  # no center supplied -> no center column (unchanged legacy shape)
+  bare <- .cur$buildPairs(pairsVec = list(list(var = "cl", covar = "BW")))
+  expect_false("center" %in% names(bare))
+})
+
+# ---- Integration: median first, then fixed override ------------------------
+
+test_that("enrichPairs medians are overridden by .applyFixedCenters", {
+  # one row per subject; medians are deliberately off the fixed anchors so the
+  # override is observable.
+  set.seed(1)
+  dat <- data.frame(
+    ID   = 1:11,
+    TIME = 0,
+    DV   = 0,
+    BW   = 60:70,                       # median 65  (anchor will be 70)
+    CrCL = seq(80, 100, length.out = 11),  # median 90  (anchor will be 95)
+    BMI  = seq(22, 32, length.out = 11)    # median 27  (no anchor -> stays)
+  )
+
+  pairs <- data.frame(
+    var   = c("cl", "cl", "vc"),
+    covar = c("BW", "CrCL", "BMI"),
+    stringsAsFactors = FALSE
+  )
+
+  enriched <- .cur$.enrichPairs(pairs, dat)
+  # sanity: enrichment filled the per-subject medians
+  expect_equal(enriched$center[enriched$raw_col == "BW"],   65)
+  expect_equal(enriched$center[enriched$raw_col == "CrCL"], 90)
+  expect_equal(enriched$center[enriched$raw_col == "BMI"],  27)
+
+  fixed <- .cur$.applyFixedCenters(enriched, c(BW = 70, CrCL = 95))
+  # named anchors override the medians ...
+  expect_equal(fixed$center[fixed$raw_col == "BW"],   70)
+  expect_equal(fixed$center[fixed$raw_col == "CrCL"], 95)
+  # ... unnamed BMI keeps the data-driven median
+  expect_equal(fixed$center[fixed$raw_col == "BMI"],  27)
 # .pickForwardWinner / .pickBackwardWinner — winner-selection tie-breaking
 # -----------------------------------------------------------------------------
 # For df = 1 any dOFV >= ~70.5 makes 1 - pchisq() underflow to exactly 0, so
