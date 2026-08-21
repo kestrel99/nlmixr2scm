@@ -867,6 +867,65 @@ test_that(".rebuildUiFromPairs: two covariates on different parameters both adde
 })
 
 # =============================================================================
+# .freezeUiForProfile  (1-D Brent warm-start: frozen base)
+# =============================================================================
+
+.make_cov_ui <- function() {
+  ui <- nlmixr2est::nlmixr(.one_cmt_fun)
+  pairs <- data.frame(
+    var = "cl", covar = "wt_power", covExpr = "log(wt/70)",
+    init = 0.5, lower = -2, upper = 2, stringsAsFactors = FALSE
+  )
+  .cur$.rebuildUiFromPairs(ui, pairs)
+}
+
+test_that(".freezeUiForProfile: leaves exactly one theta free", {
+  ui <- .make_cov_ui()
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  ini <- frozen$iniDf
+  is_theta <- !is.na(ini$ntheta)
+  free <- ini$name[is_theta & !ini$fix]
+  expect_equal(free, "cov_wt_power_cl")
+})
+
+test_that(".freezeUiForProfile: fixes all structural + residual thetas", {
+  ui <- .make_cov_ui()
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  ini <- frozen$iniDf
+  is_theta <- !is.na(ini$ntheta)
+  fixed <- ini$name[is_theta & ini$fix]
+  # tka, tcl, tv, add.sd all fixed; the new cov theta is not
+  expect_true(all(c("tka", "tcl", "tv", "add.sd") %in% fixed))
+  expect_false("cov_wt_power_cl" %in% fixed)
+})
+
+test_that(".freezeUiForProfile: preserves parent theta estimates", {
+  ui <- .make_cov_ui()
+  before <- ui$iniDf
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  after <- frozen$iniDf
+  for (nm in c("tka", "tcl", "tv")) {
+    expect_equal(
+      after$est[after$name == nm],
+      before$est[before$name == nm]
+    )
+  }
+})
+
+test_that(".freezeUiForProfile: zeroes between-subject variability (omega)", {
+  ui <- .make_cov_ui()
+  frozen <- .cur$.freezeUiForProfile(ui, "cov_wt_power_cl")
+  ini <- frozen$iniDf
+  # no free eta rows should remain after zeroRe(which = "omega")
+  eta_rows <- ini[!is.na(ini$neta1), , drop = FALSE]
+  if (nrow(eta_rows) > 0) {
+    expect_true(all(eta_rows$fix | eta_rows$est == 0))
+  } else {
+    expect_equal(nrow(eta_rows), 0L)
+  }
+})
+
+# =============================================================================
 # Integration tests — require nlmixr2data, slow fitting
 # =============================================================================
 
@@ -1536,4 +1595,103 @@ test_that(".pickBackwardWinner: p == 1 tie broken by smallest deltObjf", {
     deltObjf = c(3.0, 0.4)
   )
   expect_equal(.cur$.pickBackwardWinner(rt), 2L)          # CrCL raises OFV least
+# Retry-exhaustion best-attempt tracking
+#
+# .fitCandidatePairs() must keep the BEST (largest-dObjf) attempt across
+# perturbed-init retries, not whichever attempt happened to run last.
+#
+# The selection rule is INLINED inside .fitCandidatePairs() because that loop
+# runs in future.apply workers spawned by .plap(); workers load the installed
+# package and cannot see helpers introduced via devtools::load_all().  These
+# tests mirror the production rule locally so the spec is documented and the
+# regression scenario stays covered.  If the inlined block in R/scm.R changes,
+# update .update_best_attempt() below to match.
+# =============================================================================
+# Local mirror of the production rule.  Source of truth in R/scm.R inside
+# .fitCandidatePairs():
+#
+#   if (is.null(best_attempt) ||
+#       .cand_attempt$dObjf > best_attempt$dObjf) {
+#     best_attempt <- .cand_attempt
+#   }
+.update_best_attempt <- function(best, candidate) {
+  if (is.null(best) || candidate$dObjf > best$dObjf) candidate else best
+}
+
+test_that("retry tracking: first attempt becomes best when no incumbent", {
+  cand <- list(x = "a", dObjf = -250, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  expect_identical(.update_best_attempt(NULL, cand), cand)
+})
+
+test_that("retry tracking: candidate with larger dObjf replaces incumbent", {
+  best <- list(x = "a", dObjf = -250, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  cand <- list(x = "b", dObjf =   -1, dof = 1L, pchisqr = 1, attempt_num = 2L)
+  expect_identical(.update_best_attempt(best, cand), cand)
+})
+
+test_that("retry tracking: candidate with smaller dObjf keeps incumbent", {
+  best <- list(x = "a", dObjf =  -1, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  cand <- list(x = "b", dObjf = -100, dof = 1L, pchisqr = 1, attempt_num = 2L)
+  expect_identical(.update_best_attempt(best, cand), best)
+})
+
+test_that("retry tracking: ties resolve to incumbent (no churn)", {
+  best <- list(x = "a", dObjf = -50, dof = 1L, pchisqr = 1, attempt_num = 1L)
+  cand <- list(x = "b", dObjf = -50, dof = 1L, pchisqr = 1, attempt_num = 2L)
+  expect_identical(.update_best_attempt(best, cand), best)
+})
+
+test_that("retry tracking: regression -- last attempt with smaller dObjf does not overwrite best", {
+  # Bug scenario from the SEX_1~cl retry chain: three attempts produce
+  # dObjf = -250, -1, -100.  The original .fitCandidatePairs() unconditionally
+  # kept the LAST attempt (-100), even though the per-attempt warning correctly
+  # claimed "best available".  The current implementation tracks the running
+  # best, so attempt 2 (-1) survives.
+  b <- NULL
+  b <- .update_best_attempt(b, list(x = "att1", dObjf = -250, dof = 1L,
+                                    pchisqr = 1, attempt_num = 1L))
+  b <- .update_best_attempt(b, list(x = "att2", dObjf =   -1, dof = 1L,
+                                    pchisqr = 1, attempt_num = 2L))
+  b <- .update_best_attempt(b, list(x = "att3", dObjf = -100, dof = 1L,
+                                    pchisqr = 1, attempt_num = 3L))
+  expect_equal(b$x, "att2")
+  expect_equal(b$dObjf, -1)
+  expect_equal(b$attempt_num, 2L)
+})
+
+# =============================================================================
+# profileInitOnStall / stallTol — profile-on-stall rescue parameters
+# -----------------------------------------------------------------------------
+# The forward search can stall when the derivative-free outer optimiser
+# (bobyqa) never steps a new covariate coefficient off its init, leaving the
+# nested model with a WORSE OFV than its parent (dObjf <= 0) -- mathematically
+# impossible at a true optimum.  Observed for ODE models whose FOCEi objective
+# carries solver noise; the true per-step subproblem is unimodal, so a single
+# 1-D FOCEi profile init rescues it.
+#
+# The rescue lives at the END of the .fitCandidatePairs() retry loop so it
+# fires INDEPENDENTLY of maxRetries -- in particular it must still fire when
+# maxRetries = 0 (the benchmark config).  It keeps the profile-init refit ONLY
+# when it STRICTLY improves dObjf, so it can never make a candidate worse.
+# =============================================================================
+
+test_that("runSCM: profileInitOnStall / stallTol parameters exist with expected defaults", {
+  # Formals-only smoke check -- no fitting needed.
+  fmls <- formals(.cur$runSCM)
+  expect_true("profileInitOnStall" %in% names(fmls))
+  expect_true("stallTol"           %in% names(fmls))
+  expect_true(isTRUE(eval(fmls$profileInitOnStall)))
+  expect_equal(eval(fmls$stallTol), 0)
+})
+
+test_that(".fitCandidatePairs / forwardSearch: profile-on-stall parameters threaded through", {
+  # The rescue must be reachable from every layer that .fitCandidatePairs is
+  # called from, so the args have to appear in each formals list.
+  for (fn in c("runSCM", "forwardSearch", ".fitCandidatePairs")) {
+    fmls <- formals(.cur[[fn]])
+    expect_true("profileInitOnStall" %in% names(fmls),
+                info = paste0(fn, " lacks profileInitOnStall"))
+    expect_true("stallTol" %in% names(fmls),
+                info = paste0(fn, " lacks stallTol"))
+  }
 })

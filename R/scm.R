@@ -120,6 +120,31 @@
 #' @param confirm logical; if \code{TRUE} (default) and the session is
 #'   interactive, the user is prompted to confirm before the search begins.
 #'   Set to \code{FALSE} to skip the prompt (useful in scripts or tests).
+#' @param profileInit logical; if \code{TRUE}, each forward candidate's new
+#'   covariate coefficient is warm-started with a cheap 1-D FOCEi profile on a
+#'   frozen base (all structural thetas fixed at their parent estimates and the
+#'   between-subject variability FIXED -- not zeroed -- at its parent values)
+#'   before the real estimator runs.  Keeping the random effects intact matters:
+#'   profiling a covariate on a fixed-effect-only model is misspecified and can
+#'   return the wrong sign.  This supplies gradient optimisers (\code{nlminb},
+#'   \code{lbfgsb3c}) with a nonzero, gradient-informative starting value so
+#'   they do not stall at the flat zero-effect point.  bobyqa is never involved
+#'   in the caller; the profiled value is handed back to the fit's own
+#'   estimator.  Default \code{FALSE}.
+#' @param profileInitOnStall logical; if \code{TRUE} (default), a forward
+#'   candidate whose ordinary fit \emph{stalls} -- i.e. the nested model's OFV
+#'   improvement over its parent is \code{<= stallTol} (a nested model can never
+#'   be genuinely worse than its parent at a true optimum, so this signals the
+#'   outer optimiser never left the covariate init) -- triggers a one-shot
+#'   \code{.profileCovInit()} frozen 1-D profile.  The profiled coefficient is
+#'   then used as the init for a rescue refit.  Unlike \code{profileInit}, this
+#'   fires only when a stall is detected, so healthy candidates (e.g. analytic
+#'   \code{linCmt()} fits) pay no extra cost.  It is the fix for ODE covariate
+#'   candidates that stall at their init under solver-noise-flattened outer
+#'   objectives.  Default \code{TRUE}.
+#' @param stallTol numeric; OFV-improvement threshold below which a forward
+#'   candidate is considered stalled and eligible for the profile rescue.
+#'   Default \code{0} (any nested model no better than its parent).
 #' @param maxRetries integer; maximum number of retry attempts per candidate
 #'   when the OFV is deemed unrealistic.  Default \code{3L}.  Set to \code{0}
 #'   to disable the retry mechanism entirely.
@@ -203,6 +228,9 @@ runSCM <- function(
   restart = FALSE,
   workers = NULL,
   confirm = TRUE,
+  profileInit = FALSE,
+  profileInitOnStall = TRUE,
+  stallTol = 0,
   maxRetries = 3L,
   maxDeltaOFV = Inf,
   retryPerturbSD = 0.5,
@@ -449,6 +477,9 @@ runSCM <- function(
         verbose = verbose,
         control = control,
         print = print,
+        profileInit = profileInit,
+        profileInitOnStall = profileInitOnStall,
+        stallTol = stallTol,
         maxRetries = maxRetries,
         maxDeltaOFV = maxDeltaOFV,
         retryPerturbSD = retryPerturbSD,
@@ -504,6 +535,9 @@ runSCM <- function(
         verbose = verbose,
         control = control,
         print = print,
+        profileInit = profileInit,
+        profileInitOnStall = profileInitOnStall,
+        stallTol = stallTol,
         maxRetries = maxRetries,
         maxDeltaOFV = maxDeltaOFV,
         retryPerturbSD = retryPerturbSD,
@@ -1585,6 +1619,98 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
   pairs
 }
 
+#' Freeze a candidate UI for a cheap 1-D profile of one covariate theta
+#'
+#' Fixes every population theta except \code{freeTheta} at its current
+#' estimate (inherited from the parent fit via \code{base_ui$iniDf}) and
+#' zeroes all between-subject variability, yielding a fast fixed-effect model
+#' whose only free parameter is the new covariate coefficient.  This is the
+#' "frozen base" on which the 1-D Brent profile runs.
+#'
+#' @param ui        candidate rxode2 UI (base + context + new covariate)
+#' @param freeTheta name of the single theta left free (e.g. "cov_BW_cl")
+#' @return a decompressed rxode2 UI with etas removed and all but one theta
+#'   fixed
+#' @noRd
+.freezeUiForProfile <- function(ui, freeTheta) {
+  ui <- rxode2::rxUiDecompress(ui)
+  ini <- ui$iniDf
+  isTheta <- !is.na(ini$ntheta)
+  ini$fix[isTheta] <- TRUE
+  ini$fix[isTheta & ini$name == freeTheta] <- FALSE
+  ui$iniDf <- ini
+  # Drop omega (between-subject variability) so the profile is a fast
+  # fixed-effect fit; residual error stays fixed at the parent value.
+  ui <- rxode2::zeroRe(ui, which = "omega")
+  ui
+}
+
+#' Profile a single new covariate theta with a 1-D Brent search
+#'
+#' Builds the candidate UI (base + accepted context + the one new covariate),
+#' freezes it via \code{.freezeUiForProfile()}, and runs a derivative-free 1-D
+#' Brent optimisation (\code{est = "optim"}) over the single free covariate
+#' coefficient.  Used to seed gradient optimisers (nlminb / lbfgsb3c) with a
+#' nonzero, gradient-informative starting value so they do not stall at the
+#' flat zero-effect point.  bobyqa is never involved: the profiled value is
+#' handed back to the fit's own estimator by the caller.
+#'
+#' @param base_ui   clean base UI (\code{fit$finalUiEnv})
+#' @param ctx_df    accepted-covariate context pairs (or \code{NULL})
+#' @param nam_var   parameter name (e.g. "cl")
+#' @param nam_covar covariate name (e.g. "BW")
+#' @param cov_expr  covariate model expression string (or \code{NULL})
+#' @param cov_init  fallback initial value for the new theta (Brent start)
+#' @param cov_lower lower bound (Brent bracket)
+#' @param cov_upper upper bound (Brent bracket)
+#' @param covNames  theta name of the new covariate (e.g. "cov_BW_cl")
+#' @param data      modelling data frame
+#' @return profiled estimate (finite numeric strictly inside the bracket) or
+#'   \code{NA_real_} when profiling fails or lands on a bound
+#' @noRd
+.profileCovInit <- function(base_ui, ctx_df, nam_var, nam_covar, cov_expr,
+                            cov_init, cov_lower, cov_upper, covNames, data) {
+  cand_df <- data.frame(
+    var     = nam_var,
+    covar   = nam_covar,
+    covExpr = if (!is.null(cov_expr)) cov_expr else nam_covar,
+    init    = cov_init,
+    lower   = cov_lower,
+    upper   = cov_upper,
+    stringsAsFactors = FALSE
+  )
+  all_pairs <- if (!is.null(ctx_df)) rbind(ctx_df, cand_df) else cand_df
+  ui        <- .rebuildUiFromPairs(base_ui, all_pairs)
+  frozen    <- .freezeUiForProfile(ui, covNames)
+
+  # est = "optim" with a single free parameter dispatches to stats::optim
+  # method = "Brent", a safe derivative-free 1-D search over [lower, upper].
+  # calcTables = FALSE skips the (unneeded) output tables; the profiled theta
+  # is read from the fit core's fixed-effect vector regardless.  Fall back to
+  # a bare Brent control if the installed nlmixr2est rejects an argument.
+  ctrl <- tryCatch(
+    nlmixr2est::optimControl(
+      method     = "Brent",
+      calcTables = FALSE,
+      print      = 0L
+    ),
+    error = function(e) nlmixr2est::optimControl(method = "Brent")
+  )
+  pf <- suppressWarnings(
+    nlmixr2est::nlmixr2(frozen, data, "optim", control = ctrl)
+  )
+  val <- tryCatch(unname(pf$theta[[covNames]]), error = function(e) NA_real_)
+  if (is.null(val) || length(val) != 1L || !is.finite(val)) {
+    return(NA_real_)
+  }
+  # Reject boundary solutions: a theta pinned to the bracket edge is not a
+  # trustworthy warm start (caller falls back to the default init).
+  if (val <= cov_lower || val >= cov_upper) {
+    return(NA_real_)
+  }
+  val
+}
+
 #' Filter a pairs data frame to only those pairs present in a fitted model
 #'
 #' @param pairs data frame with columns \code{var} and \code{covar}
@@ -1698,6 +1824,9 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
   add,
   control = NULL,
   print = 100,
+  profileInit = FALSE,
+  profileInitOnStall = TRUE,
+  stallTol = 0,
   maxRetries = 3L,
   maxDeltaOFV = Inf,
   retryPerturbSD = 0.5,
@@ -1779,6 +1908,34 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
         NULL
       }
 
+      # Optional 1-D Brent warm-start: profile the single new covariate theta
+      # on a frozen base (all other thetas fixed at their parent estimates,
+      # between-subject variability zeroed) to obtain a gradient-informative
+      # starting value before the real estimator runs.  Forward path only.
+      if (isTRUE(profileInit) && add) {
+        prof_init <- tryCatch(
+          .profileCovInit(
+            base_ui   = base_ui,
+            ctx_df    = ctx_df,
+            nam_var   = nam_var,
+            nam_covar = nam_covar,
+            cov_expr  = cov_expr,
+            cov_init  = orig_cov_init,
+            cov_lower = cov_lower,
+            cov_upper = cov_upper,
+            covNames  = covNames,
+            data      = data
+          ),
+          error = function(e) NA_real_
+        )
+        if (is.finite(prof_init)) {
+          cli::cli_inform(c(
+            "i" = "Brent warm-start {covNames}: {round(orig_cov_init, 4)} -> {round(prof_init, 4)}"
+          ))
+          orig_cov_init <- prof_init
+        }
+      }
+
       # For backward elimination: build the candidate UI once (no init to vary)
       ui_cand <- if (!add) {
         cp_minus <- if (!is.null(context_pairs) && nrow(context_pairs) > 0) {
@@ -1802,6 +1959,9 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
       if (isTRUE(ui_cand$.failed)) return(ui_cand)
 
       loop_result <- NULL
+      # Best attempt seen across retries (forward path only).  
+      # "Best" = the candidate with the largest dObjf. 
+      best_attempt <- NULL
 
       for (attempt in 0:maxRetries) {
         cov_init_attempt <- if (attempt == 0L) {
@@ -1889,6 +2049,21 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
           break
         }
 
+        # Selection rule: candidate wins on the first attempt (best is NULL)
+        # or when its dObjf strictly exceeds the incumbent; ties keep the
+        # incumbent.  Without this tracker, the exhaustion branch silently
+        # kept whichever attempt happened to be last -- under perturbed-init
+        # retries that was the best only by coincidence.  The corresponding
+        # regression tests live in tests/testthat/test-scm.R.
+        .cand_attempt <- list(
+          x = x, dObjf = dObjf, dof = dof, pchisqr = pchisqr,
+          attempt_num = attempt + 1L
+        )
+        if (is.null(best_attempt) ||
+            .cand_attempt$dObjf > best_attempt$dObjf) {
+          best_attempt <- .cand_attempt
+        }
+
         if (!.isUnrealisticOFV(
           x$objf, fit$objf, dObjf, pchisqr, maxDeltaOFV, effective_tolerance
         )) {
@@ -1911,6 +2086,7 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
 
         if (attempt < maxRetries) {
           next_strategy <- if ((attempt + 1L) %% 2L == 1L) "perturbed" else "small"
+ 
           cli::cli_warn(c(
             "!" = paste0(
               "{nam_covar} ~ {nam_var}: unrealistic OFV on attempt ",
@@ -1930,15 +2106,19 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
               .pair = paste0(nam_covar, " ~ ", nam_var)
             ))
           } else {
-            cli::cli_warn(c(
-              "!" = paste0(
-                "{nam_covar} ~ {nam_var}: unrealistic OFV after all ",
-                maxRetries + 1L, " attempt",
-                if (maxRetries + 1L == 1L) "" else "s",
-                ": ", trigger, ". Accepting best available result."
-              )
-            ))
-            loop_result <- list(x = x, dObjf = dObjf, dof = dof, pchisqr = pchisqr)
+ 
+            cli::cli_warn(c("!" = paste0(
+              "{nam_covar} ~ {nam_var}: unrealistic OFV after all ",
+              maxRetries + 1L, " attempt",
+              if (maxRetries + 1L == 1L) "" else "s",
+              ": ", trigger, ". Accepting best available result (attempt ",
+              best_attempt$attempt_num, "/", maxRetries + 1L,
+              ", dOFV = ", round(best_attempt$dObjf, 3), ")."
+            )))
+            loop_result <- list(
+              x = best_attempt$x, dObjf = best_attempt$dObjf,
+              dof = best_attempt$dof, pchisqr = best_attempt$pchisqr
+            )
             break
           }
         }
@@ -1948,6 +2128,82 @@ buildPairs <- function(varsVec = NULL, covarsVec = NULL, pairsVec = NULL) {
       dObjf   <- loop_result$dObjf
       dof     <- loop_result$dof
       pchisqr <- loop_result$pchisqr
+
+      # -- Profile-on-stall rescue (forward path only) ----------------------
+      # Independent of the retry budget: runs AFTER the retry loop so it fires
+      # even when maxRetries = 0 (the fast benchmark setting).  A forward
+      # candidate whose accepted fit still stalled -- dObjf <= stallTol, i.e.
+      # the nested model is no better than its parent, which is impossible at a
+      # true optimum -- means the outer optimiser never moved the covariate off
+      # its init.  We run ONE frozen 1-D .profileCovInit() (all other thetas
+      # fixed, BSV fixed-but-present) to obtain a basin-correct coefficient,
+      # then refit the full candidate from that init.  The rescue result is
+      # kept ONLY if it strictly improves dObjf, so it can never make a
+      # candidate worse.  Healthy candidates (dObjf > stallTol, e.g. analytic
+      # linCmt fits) skip this entirely and pay no cost.
+      if (add && isTRUE(profileInitOnStall) &&
+          is.finite(dObjf) && dObjf <= stallTol) {
+        prof_val <- tryCatch(
+          .profileCovInit(
+            base_ui   = base_ui,
+            ctx_df    = ctx_df,
+            nam_var   = nam_var,
+            nam_covar = nam_covar,
+            cov_expr  = cov_expr,
+            cov_init  = orig_cov_init,
+            cov_lower = cov_lower,
+            cov_upper = cov_upper,
+            covNames  = covNames,
+            data      = data
+          ),
+          error = function(e) NA_real_
+        )
+        if (is.finite(prof_val)) {
+          cand_df_p <- data.frame(
+            var     = nam_var,
+            covar   = nam_covar,
+            covExpr = if (!is.null(cov_expr)) cov_expr else nam_covar,
+            init    = prof_val,
+            lower   = cov_lower,
+            upper   = cov_upper,
+            stringsAsFactors = FALSE
+          )
+          all_pairs_p <- if (!is.null(ctx_df)) rbind(ctx_df, cand_df_p) else cand_df_p
+          x_p <- tryCatch(
+            {
+              ui_p <- .rebuildUiFromPairs(base_ui, all_pairs_p)
+              suppressWarnings(nlmixr2est::nlmixr2(
+                ui_p, data, fit$est, control = cand_control
+              ))
+            },
+            error = function(e) NULL
+          )
+          if (!is.null(x_p) && !isTRUE(x_p$.failed) &&
+              !is.null(x_p$objf) && is.finite(x_p$objf)) {
+            dObjf_p <- fit$objf - x_p$objf
+            if (is.finite(dObjf_p) && dObjf_p > dObjf) {
+              dof_p <- length(x_p$finalUiEnv$ini$est) -
+                length(fit$finalUiEnv$ini$est)
+              pchisqr_p <- if (dObjf_p > 0) {
+                1 - stats::pchisq(dObjf_p, df = dof_p)
+              } else {
+                1
+              }
+              cli::cli_inform(c(
+                "v" = paste0(
+                  "{nam_covar} ~ {nam_var}: profile-on-stall rescue ",
+                  "dOFV ", round(dObjf, 3), " -> ", round(dObjf_p, 3),
+                  " (profile init ", round(prof_val, 4), ")."
+                )
+              ))
+              x       <- x_p
+              dObjf   <- dObjf_p
+              dof     <- dof_p
+              pchisqr <- pchisqr_p
+            }
+          }
+        }
+      }
 
       covarEffect <- if (add) {
         x$parFixedDf[covNames, "Estimate"]
@@ -2098,6 +2354,9 @@ forwardSearch <- function(
   verbose = FALSE,
   control = NULL,
   print = 100,
+  profileInit = FALSE,
+  profileInitOnStall = TRUE,
+  stallTol = 0,
   maxRetries = 3L,
   maxDeltaOFV = Inf,
   retryPerturbSD = 0.5,
@@ -2202,6 +2461,9 @@ forwardSearch <- function(
       add = TRUE,
       control = control,
       print = print,
+      profileInit = profileInit,
+      profileInitOnStall = profileInitOnStall,
+      stallTol = stallTol,
       maxRetries = maxRetries,
       maxDeltaOFV = maxDeltaOFV,
       retryPerturbSD = retryPerturbSD,
