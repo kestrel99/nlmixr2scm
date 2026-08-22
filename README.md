@@ -46,7 +46,7 @@ The package is in early testing and is not yet on CRAN. Install the development 
 `nlmixr2utils`.
 
 ```r
-remotes::install_github("kestrel99/nlmixr2utils")
+remotes::install_github("nlmixr2/nlmixr2utils")
 remotes::install_github("nlmixr2/nlmixr2scm")
 ```
 
