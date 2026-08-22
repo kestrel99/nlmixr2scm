@@ -2,6 +2,14 @@
 
 * Changed `dOFV` sign convention: `dOFV` is now reported as `candidate OFV − reference OFV` uniformly for both forward and backward steps. A negative value indicates an OFV improvement (forward addition), a positive value indicates an OFV increase (backward removal). Previously the sign was flipped so that `dOFV` was always positive for "meaningful" changes, which was internally convenient but inconsistent with the standard pharmacometric interpretation. The `maxDeltaOFV` retry criterion now compares against `|dOFV|`.
 
+* Fixed the retry mechanism for unrealistic OFV values (added in 0.2) to accept the best attempt seen across all retries when every attempt is exhausted, rather than whichever attempt happened to run last. Under perturbed-init retries, the last attempt was the best only by coincidence.
+
+* `runSCM()` gained a `centers` argument to fix the centering (reference) value for one or more continuous covariates instead of using the per-dataset median, e.g. `centers = c(BW = 70, CrCL = 95)`. This keeps estimated covariate coefficients on the same reference across datasets and matches data-generating models that used fixed references; covariates not named in `centers` continue to use the median.
+
+* `runSCM()` gained `profileInit` and `profileInitOnStall` (default `TRUE`) arguments to warm-start a forward candidate's covariate coefficient with a cheap frozen 1-D profile (Brent method) before the real estimator runs, with structural thetas and between-subject variability fixed at their parent values. This gives gradient optimisers a nonzero, gradient-informative starting value so ODE covariate candidates no longer stall at the flat zero-effect initial estimate under solver-noise-flattened objectives. `profileInitOnStall` fires the rescue only when a candidate's ordinary fit stalls (OFV improvement over its parent `<= stallTol`, default `0`); `profileInit` forces the profile for every forward candidate.
+
+* Fixed forward and backward winner selection in `runSCM()` to break ties on `deltObjf` instead of row order. For `df = 1`, `dOFV >= ~70.5` underflows `1 - pchisq()` to exactly `0` (forward) or `1` (backward), so several strong candidates could tie on `pchisqr`; `which.min()`/`which.max()` then silently picked whichever candidate happened to sort first rather than the one with the largest (forward) or smallest (backward) OFV change.
+
 # nlmixr2scm 0.2
 
 * Yaping Liu added as package co-author.

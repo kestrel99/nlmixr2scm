@@ -21,10 +21,13 @@ Useful links:
 
 Authors:
 \itemize{
+  \item Justin Wilkins \email{justin.wilkins@occams.com} (\href{https://orcid.org/0000-0002-7099-9396}{ORCID})
+  \item Yuan Liu \email{ypliu@umich.edu}
   \item Matthew Fidler \email{matthew.fidler@gmail.com} (\href{https://orcid.org/0000-0001-8538-6691}{ORCID})
+  \item Yaping Liu \email{ypliu@umich.edu} (\href{https://orcid.org/0009-0009-2842-3797}{ORCID})
+  \item Bill Denney \email{wdenney@humanpredictions.com} (\href{https://orcid.org/0000-0002-5759-428X}{ORCID})
   \item Vipul Mann \email{vm2583@columbia.edu}
   \item Vishal Sarsani \email{vsarsani@umass.edu} (\href{https://orcid.org/0000-0002-9272-3438}{ORCID})
-  \item Bill Denney \email{wdenney@humanpredictions.com} (\href{https://orcid.org/0000-0002-5759-428X}{ORCID})
 }
 
 Other contributors:

@@ -13,6 +13,7 @@ runSCM(
   pairsVec = NULL,
   shapes = "power",
   customShapes = NULL,
+  centers = NULL,
   inits = list(),
   missingToken = NA,
   includedRelations = NULL,
@@ -26,7 +27,16 @@ runSCM(
   searchType = c("scm", "forward", "backward"),
   restart = FALSE,
   workers = NULL,
-  confirm = TRUE
+  confirm = TRUE,
+  profileInit = FALSE,
+  profileInitOnStall = TRUE,
+  stallTol = 0,
+  maxRetries = 3L,
+  maxDeltaOFV = Inf,
+  retryPerturbSD = 0.5,
+  retrySmallInit = 0.01,
+  retryOFVTolerance = NULL,
+  retryFailOnExhaustion = FALSE
 )
 }
 \arguments{
@@ -66,12 +76,21 @@ overrides can be specified via the \code{shapes} element of individual
 form \code{function(col, center, level) -> character}.  These are merged
 with the built-in shapes and take precedence over them.}
 
+\item{centers}{optional named numeric vector of fixed reference (centering)
+values for continuous covariates, e.g. \code{c(BW = 70, CrCL = 95)}.  When
+supplied, the named covariates are centered on these fixed values in every
+fit instead of the per-dataset median.  This keeps the estimated covariate
+coefficients (and the structural intercept) on the SAME reference across
+datasets and matches a data-generating model that used the same fixed
+references.  Names are matched against the raw covariate column; unmatched
+names are ignored and covariates not named here fall back to the median.}
+
 \item{inits}{named list mapping shape names to initial theta estimates (and
 optionally bounds) for the covariate parameter.  Each entry may be either
 a scalar estimate (e.g. \code{list(power = 0.1, lin = 0.01, cat = 0.01)})
 or a named list with elements \code{est}, \code{lower}, and \code{upper}
 (e.g. \code{list(power = list(est = 0.1, lower = -5, upper = 5),
-  lin = 0.01)}).  Applied globally to all pairs; a per-pair \code{inits}
+lin = 0.01)}).  Applied globally to all pairs; a per-pair \code{inits}
 element in a \code{pairsVec} list item takes precedence.  Shapes not
 listed default to \code{est = 0, lower = -Inf, upper = Inf}.  When a
 covariate is accepted, the estimated value from that step is automatically
@@ -84,10 +103,14 @@ observations in addition to \code{NA}.  Default \code{NA} (only true
 \code{-99}) or a character string (e.g. \code{"."}) to also flag that
 sentinel as missing.  When missing observations are detected for a
 covariate, the generated model expression is wrapped in an
-\code{ifelse()} guard so that the covariate contribution is set to the
-population-typical value: \code{0} for continuous covariates (equivalent
-to imputing the median, since \code{log(median/median) = 0}) or the mode
-of the observed levels for categorical covariates.}
+\code{ifelse()} guard so that the covariate contribution corresponds to
+the population-typical value (the observed median for continuous
+covariates, the mode for categorical).  For continuous covariates the
+fill is shape-aware: it is the shape expression evaluated at
+\code{cov = median}, which is \code{0} for \code{"power"} and
+\code{"lin"} (centered shapes), \code{log(median)} for \code{"log"},
+and \code{median} itself for \code{"identity"}.  For categorical
+covariates the indicator is set to the mode of the observed levels.}
 
 \item{includedRelations}{optional specification of covariate-parameter
 relationships that must be present in the model at the start of backward
@@ -167,6 +190,59 @@ duration of the search.}
 \item{confirm}{logical; if \code{TRUE} (default) and the session is
 interactive, the user is prompted to confirm before the search begins.
 Set to \code{FALSE} to skip the prompt (useful in scripts or tests).}
+
+\item{profileInit}{logical; if \code{TRUE}, each forward candidate's new
+covariate coefficient is warm-started with a cheap 1-D FOCEi profile on a
+frozen base (all structural thetas fixed at their parent estimates and the
+between-subject variability FIXED -- not zeroed -- at its parent values)
+before the real estimator runs.  Keeping the random effects intact matters:
+profiling a covariate on a fixed-effect-only model is misspecified and can
+return the wrong sign.  This supplies gradient optimisers (\code{nlminb},
+\code{lbfgsb3c}) with a nonzero, gradient-informative starting value so
+they do not stall at the flat zero-effect point.  bobyqa is never involved
+in the caller; the profiled value is handed back to the fit's own
+estimator.  Default \code{FALSE}.}
+
+\item{profileInitOnStall}{logical; if \code{TRUE} (default), a forward
+candidate whose ordinary fit \emph{stalls} -- i.e. the nested model's OFV
+improvement over its parent is \code{<= stallTol} (a nested model can never
+be genuinely worse than its parent at a true optimum, so this signals the
+outer optimiser never left the covariate init) -- triggers a one-shot
+\code{.profileCovInit()} frozen 1-D profile.  The profiled coefficient is
+then used as the init for a rescue refit.  Unlike \code{profileInit}, this
+fires only when a stall is detected, so healthy candidates (e.g. analytic
+\code{linCmt()} fits) pay no extra cost.  It is the fix for ODE covariate
+candidates that stall at their init under solver-noise-flattened outer
+objectives.  Default \code{TRUE}.}
+
+\item{stallTol}{numeric; OFV-improvement threshold below which a forward
+candidate is considered stalled and eligible for the profile rescue.
+Default \code{0} (any nested model no better than its parent).}
+
+\item{maxRetries}{integer; maximum number of retry attempts per candidate
+when the OFV is deemed unrealistic.  Default \code{3L}.  Set to \code{0}
+to disable the retry mechanism entirely.}
+
+\item{maxDeltaOFV}{numeric; absolute ceiling on plausible OFV change.  A
+candidate whose \code{|dOFV|} exceeds this value is flagged as unrealistic
+and retried.  Default \code{Inf} (disabled; only criterion 1 and 2 apply).}
+
+\item{retryPerturbSD}{numeric; standard deviation of the log-normal
+perturbation applied to \code{cov_init} on odd-numbered retries.  Default
+\code{0.5}.}
+
+\item{retrySmallInit}{numeric; covariate theta init used on even-numbered
+retries as a near-zero safe-harbour.  Default \code{0.01}.}
+
+\item{retryOFVTolerance}{numeric or \code{NULL}; the margin (in OFV units)
+by which the candidate OFV must exceed the parent before a retry is
+triggered (criterion 1).  \code{NULL} (default) auto-detects: \code{10}
+for SAEM (stochastic noise), \code{0} for all other estimators.}
+
+\item{retryFailOnExhaustion}{logical; when \code{TRUE} and all retry
+attempts are exhausted with an unrealistic OFV, the candidate is marked
+as failed and excluded from the search.  When \code{FALSE} (default) a
+warning is emitted and the best available result is accepted.}
 }
 \value{
 A list with elements \code{summaryTable} (combined forward and

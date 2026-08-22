@@ -29,10 +29,13 @@ The package supports:
 * exact candidate relationship specifications via `pairsVec`
 * multiple built-in continuous-covariate shapes (`"power"`, `"lin"`, `"log"`,
   and `"identity"`)
+* fixed (rather than per-dataset-median) covariate centering via `centers`
 * automatic categorical covariate preprocessing through `catvarsVec`
 * optional forced backward-start relationships through `includedRelations`
 * saved step tables and fitted candidate models for resuming/reviewing workflows
 * optional parallel fitting of candidates through `workers` (based on `future.apply`)
+* automatic retries and profile warm-starting for candidates that produce an
+  unrealistic OFV or stall at their initial estimate
 
 `nlmixr2scm` is designed to work alongside `nlmixr2utils`, which provides 
 shared worker-plan helpers and supporting infrastructure.

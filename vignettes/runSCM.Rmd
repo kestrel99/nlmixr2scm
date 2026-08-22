@@ -133,6 +133,8 @@ reference a covariate column — otherwise `nlme::getData(fit)` may drop it.
 | `catvarsVec` | `NULL` | Categorical covariates; indicator columns created automatically |
 | `pairsVec` | `NULL` | Explicit parameter-covariate pairs; overrides `varsVec`/`covarsVec` |
 | `shapes` | `"power"` | Shape(s) for continuous covariates: `"power"`, `"lin"`, `"log"`, `"identity"` |
+| `customShapes` | `NULL` | Named list of additional shape builder functions |
+| `centers` | `NULL` | Named vector fixing the reference (centering) value for continuous covariates, e.g. `c(BW = 70)`, instead of the per-dataset median |
 | `pVal` | `list(fwd=0.05, bck=0.01)` | Forward and backward p-value thresholds |
 | `searchType` | `"scm"` | `"scm"` (both phases), `"forward"`, or `"backward"` |
 | `data` | `NULL` | Dataset; required when base model omits covariate columns |
@@ -140,11 +142,23 @@ reference a covariate column — otherwise `nlme::getData(fit)` may drop it.
 | `missingToken` | `NA` | Sentinel value for missing covariate observations |
 | `catCutoff` | `0.05` | Minimum non-reference level prevalence to test |
 | `includedRelations` | `NULL` | Relations forced into the backward-start model |
+| `outputDir` | `NULL` | Subdirectory for saved model `.rds` files; auto-named when `NULL` |
 | `saveModels` | `TRUE` | Write fitted models to `outputDir` |
 | `verbose` | `FALSE` | Print full candidate tables at each step |
+| `control` | `NULL` | Control object (e.g. `saemControl()`) passed to every `nlmixr2()` call |
+| `print` | `100` | Optimiser progress-print interval, applied as `control$print` |
 | `restart` | `FALSE` | Discard existing cache and start fresh |
 | `workers` | `NULL` | Sequential; set > 1 for parallel candidate fitting |
 | `confirm` | `TRUE` | Prompt for confirmation in interactive sessions |
+| `profileInit` | `FALSE` | Warm-start every forward candidate's covariate coefficient with a frozen 1-D profile (Brent method) |
+| `profileInitOnStall` | `TRUE` | Warm-start only candidates whose ordinary fit stalls (OFV improvement `<= stallTol`) |
+| `stallTol` | `0` | OFV-improvement threshold below which a forward candidate is considered stalled |
+| `maxRetries` | `3L` | Maximum retry attempts per candidate when the OFV is deemed unrealistic |
+| `maxDeltaOFV` | `Inf` | Absolute ceiling on plausible `\|dOFV\|` before a candidate is retried |
+| `retryPerturbSD` | `0.5` | SD of the log-normal perturbation applied to `cov_init` on odd-numbered retries |
+| `retrySmallInit` | `0.01` | Near-zero covariate theta init used on even-numbered retries |
+| `retryOFVTolerance` | `NULL` | Margin by which candidate OFV must exceed the parent before retrying; auto-detected (`10` for SAEM, `0` otherwise) when `NULL` |
+| `retryFailOnExhaustion` | `FALSE` | Exclude a candidate as failed (instead of accepting the best retry) when all retries are exhausted |
 
 ---
 
@@ -167,6 +181,12 @@ subjects are merged with the reference and not tested.
 
 Custom shapes can be added via the `customShapes` argument — a named list of functions
 `function(col, center, level)` that return a character expression string.
+
+By default `"power"` and `"lin"` center on the per-dataset median, which can differ
+between datasets fit with the same model. Pass `centers` (a named numeric vector, e.g.
+`centers = c(wt = 70)`) to fix the reference value for one or more continuous
+covariates instead, so covariate coefficients stay on a consistent reference across
+datasets. Covariates not named in `centers` continue to use the median.
 
 ---
 
@@ -401,6 +421,21 @@ the data decide.
 **Warm-starting**: when a covariate is accepted, the estimated theta from that step
 is automatically used as the starting estimate for all subsequent steps that involve
 the same covariate shape, which speeds convergence and improves numerical stability.
+
+**Stalled candidates**: with ODE models, solver noise can flatten the outer objective
+enough that a candidate's fit never leaves its zero-effect initial estimate. By
+default (`profileInitOnStall = TRUE`), a candidate whose OFV improvement over its
+parent is `<= stallTol` is automatically rescued with a one-shot frozen 1-D profile
+(Brent method) that supplies a gradient-informative starting value, then refit. Set
+`profileInit = TRUE` to warm-start every forward candidate this way rather than only
+stalled ones.
+
+**Unrealistic OFVs**: `runSCM()` retries a candidate (up to `maxRetries`, default 3)
+when its fit produces an implausible OFV — using a perturbed or near-zero covariate
+init on alternate attempts — before falling back to the best attempt seen (or, with
+`retryFailOnExhaustion = TRUE`, excluding the candidate as failed). Stochastic
+estimators (SAEM) get a wider tolerance automatically to avoid spurious retries from
+Monte Carlo noise.
 
 **Categorical covariates**: pass `catvarsVec` rather than pre-creating dummy columns.
 `runSCM()` handles level detection, reference-level selection, and indicator column
