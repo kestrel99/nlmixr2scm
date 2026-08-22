@@ -11,8 +11,8 @@ Stepwise covariate modeling tools for nlmixr2 fits.
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://github.com/kestrel99/nlmixr2scm}
-  \item Report bugs at \url{https://github.com/kestrel99/nlmixr2scm/issues}
+  \item \url{https://github.com/nlmixr2/nlmixr2scm}
+  \item Report bugs at \url{https://github.com/nlmixr2/nlmixr2scm/issues}
 }
 
 }
