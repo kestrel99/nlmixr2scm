@@ -14,31 +14,72 @@ two phases:
 
 The result is a reproducible covariate-search workflow that can summarize every
 candidate tested, keep accepted and dropped relationships explicit, and return
-the final forward and backward models for follow-up review.
+the final forward and backward models for follow-up review. It's based heavily on the approach of [Perl-speaks-NONMEM](https://github.com/UUPharmacometrics/PsN). 
 
 ## Details
 
 `runSCM()` implements the SCM workflow for `nlmixr2` fits. It automatically
 builds the covariate terms inside the model body, so continuous covariates can
 be centered at their observed medians and categorical covariates can be turned
-into indicator columns without pre-editing the model by hand.
+into indicator columns without having to edit the model by hand.
 
 The package supports:
 
-* full covariate searches via `varsVec` and `covarsVec`
-* exact candidate relationship specifications via `pairsVec`
+* full covariate searches (via `varsVec` and `covarsVec`)
+* exact candidate relationship specifications (via `pairsVec`)
 * multiple built-in continuous-covariate shapes (`"power"`, `"lin"`, `"log"`,
   and `"identity"`)
 * fixed (rather than per-dataset-median) covariate centering via `centers`
-* automatic categorical covariate preprocessing through `catvarsVec`
-* optional forced backward-start relationships through `includedRelations`
+* automatic categorical covariate preprocessing (through `catvarsVec`)
+* optional pre-included relationships (through `includedRelations`)
 * saved step tables and fitted candidate models for resuming/reviewing workflows
 * optional parallel fitting of candidates through `workers` (based on `future.apply`)
 * automatic retries and profile warm-starting for candidates that produce an
-  unrealistic OFV or stall at their initial estimate
+  unrealistic OFV or stall at their initial estimate (see "Search robustness" below)
 
-`nlmixr2scm` is designed to work alongside `nlmixr2utils`, which provides 
+`nlmixr2scm` relies on `nlmixr2utils`, which provides 
 shared worker-plan helpers and supporting infrastructure.
+
+## Search robustness
+
+Covariate searches routinely run into candidate relationships whose estimation misbehaves - 
+solver noise, stalling at initial
+estimates, or a fit landing on an implausible OFV. `runSCM()` has three features
+that keep these numerical hiccups from corrupting the search's accept/reject
+decisions, enabled by sensible defaults, so (hopefully) little to no tuning is required to benefit
+from them.
+
+**Profile warm-starting.** With ODE models in particular, gradient optimizers
+(`nlminb`, `lbfgsb3c`) can stall at a covariate's zero-effect initial
+estimate when solver noise flattens the outer objective: the fit "converges"
+having never actually explored the covariate effect, which would otherwise show
+up as a false negative in the search. By default (`profileInitOnStall = TRUE`),
+`runSCM()` detects a stalled candidate (its OFV improvement over the parent
+model is `<= stallTol`, which cannot happen at a true optimum) and rescues it
+with a cheap, frozen 1-D profile (Brent method); the structural parameters and
+between-subject variability are fixed at the parent's estimates while only
+the covariate coefficient is optimized, giving the estimator a non-zero,
+gradient-informative starting value for the refit. Set `profileInit = TRUE` to
+warm-start every forward candidate this way, not just stalled ones.
+
+**Automatic retries.** A candidate fit can occasionally land on an implausible
+OFV, creating too large a jump to be a genuine covariate effect. `runSCM()` retries
+such candidates (up to `maxRetries`, default 3) using a perturbed or near-zero
+covariate initial estimate on each attempt, then keeps the best attempt seen
+across all retries rather than whichever happened to run last. Stochastic
+estimators (SAEM) get a wider OFV tolerance automatically, since Monte Carlo
+noise alone would otherwise trigger spurious retries.
+
+**Fixed covariate centers.** By default, the `"power"` and `"lin"` shapes
+center on each dataset's observed median, which can drift between datasets fit
+with the same model (e.g. simulation studies, or re-fitting as new data
+arrives). Pass `centers` (e.g. `centers = c(wt = 70)`) to fix the reference
+value for one or more continuous covariates instead, so the estimated
+coefficients -- and the structural intercept -- stay on a consistent reference
+across runs.
+
+See the vignette (`vignette("runSCM", package = "nlmixr2scm")`) for the full
+argument reference and further tips for a robust search.
 
 ## Installation
 
